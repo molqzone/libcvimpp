@@ -26,6 +26,7 @@ class Status
 
 inline constexpr int kInvalidArgument = -1;
 inline constexpr int kNotReady = -2;
+inline constexpr int kOutOfMemory = -3;
 
 struct ContextConfig
 {
@@ -85,6 +86,8 @@ struct CaptureConfig
   int height{480};
   int fps{30};
   PixelFormat format{PixelFormat::Nv21};
+  // VPSS channel depth, and therefore the number of frames that may be held at
+  // once.  Capture rejects anything above 8.
   int depth{2};
   FitMode fit{FitMode::Crop};
 };
@@ -112,26 +115,40 @@ class Frame final
   Frame(Frame &&other) noexcept;
   Frame &operator=(Frame &&other) noexcept;
 
-  [[nodiscard]] bool Valid() const { return impl_ != nullptr; }
-  [[nodiscard]] void *Data();
-  [[nodiscard]] const void *Data() const;
-  [[nodiscard]] int Length() const;
-  [[nodiscard]] int Width() const;
-  [[nodiscard]] int Height() const;
-  [[nodiscard]] PixelFormat Format() const;
-  [[nodiscard]] FrameView View() const;
+  // Borrow slot inside the VPSS resource that produced the frame.  Declared so
+  // that Frame stays a value type that never allocates; only the implementation
+  // defines it.
+  struct Slot;
 
-  // Releases the vendor frame back to VPSS. Safe to call repeatedly.
+  [[nodiscard]] bool Valid() const { return slot_ != nullptr; }
+  [[nodiscard]] void *Data() const { return data_; }
+  [[nodiscard]] int Length() const { return static_cast<int>(size_); }
+  [[nodiscard]] int Width() const { return width_; }
+  [[nodiscard]] int Height() const { return height_; }
+  [[nodiscard]] PixelFormat Format() const { return format_; }
+  [[nodiscard]] FrameView View() const
+  {
+    return FrameView{data_, size_, width_, height_, format_};
+  }
+
+  // Returns the vendor frame to the VPSS resource it came from.  Safe to call
+  // repeatedly.  A frame must be released before the Capture or Encoder that
+  // produced it is destroyed.
   void Release();
 
  private:
   friend class Capture;
   friend class Encoder;
 
-  struct Impl;
-  void Assign(std::unique_ptr<Impl> frame);
+  void Assign(Slot &slot, PixelFormat format) noexcept;
+  void Reset() noexcept;
 
-  std::unique_ptr<Impl> impl_{};
+  Slot *slot_{};
+  std::uint8_t *data_{};
+  std::size_t size_{};
+  int width_{};
+  int height_{};
+  PixelFormat format_{PixelFormat::Unknown};
 };
 
 class Capture final

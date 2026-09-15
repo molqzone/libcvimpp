@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <new>
+#include <type_traits>
 
 #include "cvi_bin.h"
 #include "cvi_buffer.h"
@@ -19,11 +21,59 @@
 
 namespace cvimpp
 {
+
+// This file passes vendor frames straight back to the middleware and derives
+// mapping sizes from the plane lengths, so pin the shape of the structs it
+// relies on: a middleware header/library mismatch would otherwise be silent.
+static_assert(std::extent_v<decltype(VIDEO_FRAME_S::u32Length)> == 3u,
+              "unexpected VIDEO_FRAME_S plane count");
+static_assert(std::extent_v<decltype(VIDEO_FRAME_S::u64PhyAddr)> == 3u,
+              "unexpected VIDEO_FRAME_S address count");
+
 namespace
 {
 
 constexpr int kFrameTimeoutMs = 100;
 constexpr std::size_t kMaxStreamPacks = 8;
+// A VPSS channel never hands out more frames than its configured depth, so this
+// bounds the frames in flight; Capture rejects a larger depth.
+constexpr std::size_t kMaxFrameSlots = 8;
+// VPSS output buffers come from the common VB pool, so one channel cycles
+// through the same few physical blocks.
+constexpr std::size_t kMaxFrameMappings = 16;
+
+struct VpssResource;
+
+}  // namespace
+
+// Every frame borrows a slot owned by the VPSS resource that produced it, so
+// popping and releasing a frame never allocates and never touches a refcount.
+struct Frame::Slot
+{
+  VpssResource *owner{};
+  VIDEO_FRAME_INFO_S info{};
+  void *mapped{};
+  CVI_U32 mapped_size{};
+  bool in_use{};
+};
+
+namespace
+{
+
+struct FrameMapping
+{
+  CVI_U64 physical{};
+  void *mapped{};
+  CVI_U32 size{};
+};
+
+// Every constructor here reports failure through Status, so allocation failure
+// must not escape as an exception.
+template <typename T>
+std::unique_ptr<T> TryMakeUnique()
+{
+  return std::unique_ptr<T>(new (std::nothrow) T());
+}
 
 struct ContextState
 {
@@ -49,6 +99,10 @@ struct VpssResource
   bool channel_enabled{};
   bool group_started{};
   bool vi_bound{};
+  // Borrow slots and the mapping cache for the frames this channel hands out.
+  std::array<Frame::Slot, kMaxFrameSlots> slots{};
+  std::array<FrameMapping, kMaxFrameMappings> mappings{};
+  std::size_t mapping_cursor{};
 
   ~VpssResource();
 };
@@ -134,6 +188,72 @@ std::uint32_t FrameBufferSize(const VIDEO_FRAME_INFO_S &frame)
 void ReleaseFrameToVpss(VpssResource &resource, VIDEO_FRAME_INFO_S &frame)
 {
   CVI_VPSS_ReleaseChnFrame(resource.group, resource.channel, &frame);
+}
+
+// VPSS recycles its output buffers from the common VB pool, so a channel hands
+// out the same few physical blocks over and over.  Map each block once and keep
+// the mapping: the per-frame cost falls to the cache invalidate that makes the
+// VPSS write visible to the CPU.
+void *MapFrameBuffer(VpssResource &resource, CVI_U64 physical, CVI_U32 size)
+{
+  for (const FrameMapping &mapping : resource.mappings)
+  {
+    if (mapping.mapped != nullptr && mapping.physical == physical && mapping.size == size)
+    {
+      CVI_SYS_IonInvalidateCache(physical, mapping.mapped, size);
+      return mapping.mapped;
+    }
+  }
+
+  void *const mapped = CVI_SYS_MmapCache(physical, size);
+  if (mapped == nullptr)
+  {
+    return nullptr;
+  }
+
+  for (FrameMapping &mapping : resource.mappings)
+  {
+    if (mapping.mapped == nullptr)
+    {
+      mapping = FrameMapping{physical, mapped, size};
+      return mapped;
+    }
+  }
+
+  FrameMapping &victim = resource.mappings[resource.mapping_cursor];
+  resource.mapping_cursor = (resource.mapping_cursor + 1u) % resource.mappings.size();
+  CVI_SYS_Munmap(victim.mapped, victim.size);
+  victim = FrameMapping{physical, mapped, size};
+  return mapped;
+}
+
+Frame::Slot *AcquireFrameSlot(VpssResource &resource, const VIDEO_FRAME_INFO_S &frame,
+                              std::uint32_t size)
+{
+  for (Frame::Slot &slot : resource.slots)
+  {
+    if (slot.in_use)
+    {
+      continue;
+    }
+
+    void *const mapped = MapFrameBuffer(resource, frame.stVFrame.u64PhyAddr[0], size);
+    if (mapped == nullptr)
+    {
+      return nullptr;
+    }
+
+    slot.owner = &resource;
+    slot.info = frame;
+    slot.mapped = mapped;
+    slot.mapped_size = size;
+    slot.in_use = true;
+    return &slot;
+  }
+
+  // Unreachable while VPSS honours the channel depth that Capture validates
+  // against kMaxFrameSlots.
+  return nullptr;
 }
 
 void ReleaseConvertedFrame(EncoderState &state)
@@ -339,15 +459,6 @@ struct Context::Impl
   std::shared_ptr<ContextState> state;
 };
 
-struct Frame::Impl
-{
-  std::shared_ptr<VpssResource> source;
-  VIDEO_FRAME_INFO_S info{};
-  void *mapped{};
-  CVI_U32 mapped_size{};
-  PixelFormat format{PixelFormat::Unknown};
-};
-
 struct Capture::Impl
 {
   std::shared_ptr<VpssResource> source;
@@ -382,6 +493,14 @@ ContextState::~ContextState()
 
 VpssResource::~VpssResource()
 {
+  for (const FrameMapping &mapping : mappings)
+  {
+    if (mapping.mapped != nullptr)
+    {
+      CVI_SYS_Munmap(mapping.mapped, mapping.size);
+    }
+  }
+
   UnbindVi(*this);
 
   if (channel_enabled)
@@ -417,7 +536,12 @@ Context::Context(ContextConfig config)
     return;
   }
 
-  auto implementation = std::make_unique<Impl>();
+  auto implementation = TryMakeUnique<Impl>();
+  if (implementation == nullptr)
+  {
+    status_ = Status(kOutOfMemory);
+    return;
+  }
   implementation->state = std::make_shared<ContextState>();
   auto &state = *implementation->state;
 
@@ -549,77 +673,76 @@ Frame::Frame() = default;
 
 Frame::~Frame() { Release(); }
 
-Frame::Frame(Frame &&other) noexcept : impl_(std::move(other.impl_)) {}
+Frame::Frame(Frame &&other) noexcept
+    : slot_(other.slot_),
+      data_(other.data_),
+      size_(other.size_),
+      width_(other.width_),
+      height_(other.height_),
+      format_(other.format_)
+{
+  other.Reset();
+}
 
 Frame &Frame::operator=(Frame &&other) noexcept
 {
   if (this != &other)
   {
     Release();
-    impl_ = std::move(other.impl_);
+    slot_ = other.slot_;
+    data_ = other.data_;
+    size_ = other.size_;
+    width_ = other.width_;
+    height_ = other.height_;
+    format_ = other.format_;
+    other.Reset();
   }
   return *this;
 }
 
-void Frame::Assign(std::unique_ptr<Impl> frame) { impl_ = std::move(frame); }
-
-void *Frame::Data() { return impl_ != nullptr ? impl_->mapped : nullptr; }
-
-const void *Frame::Data() const { return impl_ != nullptr ? impl_->mapped : nullptr; }
-
-int Frame::Length() const
+void Frame::Assign(Slot &slot, PixelFormat format) noexcept
 {
-  return impl_ != nullptr ? static_cast<int>(impl_->mapped_size) : 0;
+  slot_ = &slot;
+  data_ = static_cast<std::uint8_t *>(slot.mapped);
+  size_ = slot.mapped_size;
+  width_ = static_cast<int>(slot.info.stVFrame.u32Width);
+  height_ = static_cast<int>(slot.info.stVFrame.u32Height);
+  format_ = format;
 }
 
-int Frame::Width() const
+void Frame::Reset() noexcept
 {
-  return impl_ != nullptr ? static_cast<int>(impl_->info.stVFrame.u32Width) : 0;
-}
-
-int Frame::Height() const
-{
-  return impl_ != nullptr ? static_cast<int>(impl_->info.stVFrame.u32Height) : 0;
-}
-
-PixelFormat Frame::Format() const
-{
-  return impl_ != nullptr ? impl_->format : PixelFormat::Unknown;
-}
-
-FrameView Frame::View() const
-{
-  if (impl_ == nullptr)
-  {
-    return {};
-  }
-  return FrameView{static_cast<const std::uint8_t *>(impl_->mapped),
-                   static_cast<std::size_t>(impl_->mapped_size), Width(), Height(), Format()};
+  slot_ = nullptr;
+  data_ = nullptr;
+  size_ = 0;
+  width_ = 0;
+  height_ = 0;
+  format_ = PixelFormat::Unknown;
 }
 
 void Frame::Release()
 {
-  if (impl_ == nullptr)
+  if (slot_ == nullptr)
   {
     return;
   }
 
-  if (impl_->mapped != nullptr)
+  if (slot_->owner != nullptr)
   {
-    CVI_SYS_Munmap(impl_->mapped, impl_->mapped_size);
-    impl_->mapped = nullptr;
+    ReleaseFrameToVpss(*slot_->owner, slot_->info);
   }
-  if (impl_->source != nullptr)
-  {
-    ReleaseFrameToVpss(*impl_->source, impl_->info);
-  }
-  impl_.reset();
+  slot_->info = VIDEO_FRAME_INFO_S{};
+  slot_->mapped = nullptr;
+  slot_->mapped_size = 0;
+  slot_->in_use = false;
+  Reset();
 }
 
 Capture::Capture(Context &context, CaptureConfig config) : context_(&context)
 {
   if (!context.Ok() || context.impl_ == nullptr || context.impl_->state == nullptr ||
-      config.width <= 0 || config.height <= 0 || config.fps <= 0 || config.depth < 0)
+      config.width <= 0 || config.height <= 0 || config.fps <= 0 || config.depth < 0 ||
+      config.depth > static_cast<int>(kMaxFrameSlots))
   {
     status_ = context.Ok() ? Status(kInvalidArgument) : context.Result();
     return;
@@ -632,7 +755,12 @@ Capture::Capture(Context &context, CaptureConfig config) : context_(&context)
     return;
   }
 
-  auto implementation = std::make_unique<Impl>();
+  auto implementation = TryMakeUnique<Impl>();
+  if (implementation == nullptr)
+  {
+    status_ = Status(kOutOfMemory);
+    return;
+  }
   auto &state = *context.impl_->state;
 
   VPSS_GRP_ATTR_S group_attr{};
@@ -690,42 +818,32 @@ Status Capture::Pop(Frame &frame)
     return Status(kInvalidArgument);
   }
 
+  VpssResource &resource = *impl_->source;
+
   VIDEO_FRAME_INFO_S vendor_frame{};
-  const int result = CVI_VPSS_GetChnFrame(impl_->source->group, impl_->source->channel,
-                                          &vendor_frame, kFrameTimeoutMs);
+  const int result = CVI_VPSS_GetChnFrame(resource.group, resource.channel, &vendor_frame,
+                                          kFrameTimeoutMs);
   if (result != CVI_SUCCESS)
   {
     return Status(result);
   }
 
-  const std::uint32_t mapped_size = FrameBufferSize(vendor_frame);
-  if (mapped_size == 0 || vendor_frame.stVFrame.u64PhyAddr[0] == 0)
+  const PixelFormat format = FromVendorFormat(vendor_frame.stVFrame.enPixelFormat);
+  const std::uint32_t size = FrameBufferSize(vendor_frame);
+  if (format == PixelFormat::Unknown || size == 0 || vendor_frame.stVFrame.u64PhyAddr[0] == 0)
   {
-    ReleaseFrameToVpss(*impl_->source, vendor_frame);
+    ReleaseFrameToVpss(resource, vendor_frame);
     return Status(kInvalidArgument);
   }
 
-  void *mapped = CVI_SYS_MmapCache(vendor_frame.stVFrame.u64PhyAddr[0], mapped_size);
-  if (mapped == nullptr)
+  Frame::Slot *const slot = AcquireFrameSlot(resource, vendor_frame, size);
+  if (slot == nullptr)
   {
-    ReleaseFrameToVpss(*impl_->source, vendor_frame);
+    ReleaseFrameToVpss(resource, vendor_frame);
     return Status(CVI_FAILURE);
   }
 
-  auto frame_impl = std::make_unique<Frame::Impl>();
-  frame_impl->source = impl_->source;
-  frame_impl->info = vendor_frame;
-  frame_impl->mapped = mapped;
-  frame_impl->mapped_size = mapped_size;
-  frame_impl->format = FromVendorFormat(vendor_frame.stVFrame.enPixelFormat);
-  if (frame_impl->format == PixelFormat::Unknown)
-  {
-    CVI_SYS_Munmap(mapped, mapped_size);
-    ReleaseFrameToVpss(*impl_->source, vendor_frame);
-    return Status(kInvalidArgument);
-  }
-
-  frame.Assign(std::move(frame_impl));
+  frame.Assign(*slot, format);
   return Status(CVI_SUCCESS);
 }
 
@@ -801,7 +919,12 @@ Encoder::Encoder(Context &context, EncoderConfig config) : context_(&context)
     channel_attr.stRcAttr.stH265Cbr.bVariFpsEn = CVI_FALSE;
   }
 
-  auto implementation = std::make_unique<Impl>();
+  auto implementation = TryMakeUnique<Impl>();
+  if (implementation == nullptr)
+  {
+    status_ = Status(kOutOfMemory);
+    return;
+  }
   implementation->state = std::make_shared<EncoderState>();
   auto &state = *implementation->state;
   state.context = context.impl_->state;
@@ -910,18 +1033,18 @@ int Encoder::Channel() const
 Status Encoder::Push(const Frame &frame)
 {
   if (!Ok() || impl_ == nullptr || impl_->state == nullptr || !frame.Valid() ||
-      frame.impl_ == nullptr || frame.impl_->source == nullptr ||
-      frame.impl_->source->context == nullptr ||
-      frame.impl_->source->context.get() != impl_->state->context.get() ||
-      frame.impl_->format != impl_->state->input_format || frame.Data() == nullptr ||
-      frame.Width() != impl_->state->width || frame.Height() != impl_->state->height ||
+      frame.slot_ == nullptr || frame.slot_->owner == nullptr ||
+      frame.slot_->owner->context == nullptr ||
+      frame.slot_->owner->context.get() != impl_->state->context.get() ||
+      frame.format_ != impl_->state->input_format || frame.data_ == nullptr ||
+      frame.width_ != impl_->state->width || frame.height_ != impl_->state->height ||
       impl_->state->frame_pending)
   {
     return Status(kInvalidArgument);
   }
 
   auto &state = *impl_->state;
-  VIDEO_FRAME_INFO_S input = frame.impl_->info;
+  VIDEO_FRAME_INFO_S input = frame.slot_->info;
   const VIDEO_FRAME_INFO_S *send_frame = &input;
   VIDEO_FRAME_INFO_S converted{};
 

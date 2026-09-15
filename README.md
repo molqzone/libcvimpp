@@ -19,6 +19,25 @@ cmake --build build
 The CVI archives are mutually recursive, so the target links them inside one
 `--start-group` together with `atomic pthread dl m`.
 
+## Design
+
+`Context`, `Capture` and `Encoder` keep their vendor state behind pimpl, so the
+public header never names a CVI type.
+
+`Frame` is a value handle instead: it carries the mapped pointer and the frame
+geometry inline, and points at a borrow slot owned by the VPSS resource that
+produced it. Popping or releasing a frame therefore allocates nothing and
+touches no refcount. The slot array is bounded by the VPSS channel depth
+(`CaptureConfig::depth`, at most 8).
+
+VPSS recycles its output buffers from the common VB pool, so a channel hands out
+the same few physical blocks over and over. The resource maps each block once
+and keeps the mapping, invalidating the cache range per frame instead of doing
+an `mmap`/`munmap` pair per frame.
+
+The consequence is a lifetime contract: a frame must be released before the
+`Capture` (or `Encoder`) that produced it is destroyed.
+
 ## License
 
 Apache-2.0, see `LICENSE`.
