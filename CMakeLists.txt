@@ -1,0 +1,71 @@
+if(NOT GUIDANCE_MIDDLEWARE_DIR)
+  message(FATAL_ERROR
+    "GUIDANCE_MIDDLEWARE_DIR must point at the board middleware build directory")
+endif()
+
+get_filename_component(_cvi_board_build "${GUIDANCE_MIDDLEWARE_DIR}/.." ABSOLUTE)
+
+set(_cvi_include_dirs
+  ${GUIDANCE_MIDDLEWARE_DIR}/include
+  ${GUIDANCE_MIDDLEWARE_DIR}/include/isp/cv181x
+  ${GUIDANCE_MIDDLEWARE_DIR}/modules/isp/include/cv181x
+  ${GUIDANCE_MIDDLEWARE_DIR}/sample/common
+  ${GUIDANCE_MIDDLEWARE_DIR}/component/isp/common
+  ${_cvi_board_build}/kernel/riscv/usr/include)
+
+foreach(_include_dir IN LISTS _cvi_include_dirs)
+  if(NOT IS_DIRECTORY "${_include_dir}")
+    message(FATAL_ERROR "CVI middleware include directory not found: ${_include_dir}")
+  endif()
+endforeach()
+
+set(_cvi_archives
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsample.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libisp.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libisp_algo.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsns_full.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsns_sc035hgs.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libae.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libawb.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libaf.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_bin.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_bin_isp.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvi.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvpss.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvenc.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvdec.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvo.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/librgn.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsys.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_ive.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libmisc.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libgdc.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libraw_dump.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libjson-c.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/3rd/libini.a
+  ${GUIDANCE_MIDDLEWARE_DIR}/lib/3rd/libcli.a)
+
+foreach(_archive IN LISTS _cvi_archives)
+  if(NOT EXISTS "${_archive}")
+    message(FATAL_ERROR "CVI middleware archive not found: ${_archive}")
+  endif()
+endforeach()
+
+add_library(cvimpp STATIC src/cvi.cpp)
+
+target_compile_features(cvimpp PUBLIC cxx_std_20)
+target_compile_definitions(cvimpp PRIVATE __CV181X__ ARCH_CV181X)
+target_include_directories(cvimpp
+  PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
+  PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
+target_include_directories(cvimpp SYSTEM PRIVATE ${_cvi_include_dirs})
+target_compile_options(cvimpp PRIVATE -Wall -Wextra -Wpedantic)
+
+# The CVI archives are mutually recursive. Keep the complete vendor closure in
+# the library target so applications only link cvimpp, while the group keeps
+# archive extraction deterministic on CMake versions without LINK_GROUP.
+target_link_libraries(cvimpp PUBLIC
+  "-Wl,--start-group"
+  ${_cvi_archives}
+  "-Wl,--end-group"
+  atomic pthread dl m)
