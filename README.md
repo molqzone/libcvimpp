@@ -38,6 +38,10 @@ an `mmap`/`munmap` pair per frame.
 The consequence is a lifetime contract: a frame must be released before the
 `Capture` (or `Encoder`) that produced it is destroyed.
 
+`Status` reports the failures the middleware returns; it is not a general error
+channel. Construction allocates, so it throws `std::bad_alloc` on allocation
+failure, like any other type that uses the standard library.
+
 ## License
 
 Apache-2.0, see `LICENSE`.

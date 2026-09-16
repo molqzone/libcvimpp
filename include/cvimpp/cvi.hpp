@@ -24,9 +24,11 @@ class Status
   int code_{};
 };
 
+// Status carries the failures the middleware reports.  Allocation failure is not
+// one of them: construction allocates, so it throws std::bad_alloc like any
+// other type that uses the standard library.
 inline constexpr int kInvalidArgument = -1;
 inline constexpr int kNotReady = -2;
-inline constexpr int kOutOfMemory = -3;
 
 struct ContextConfig
 {
