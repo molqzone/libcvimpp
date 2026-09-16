@@ -60,7 +60,13 @@ foreach(_archive IN LISTS _cvi_archives)
   endif()
 endforeach()
 
-add_library(cvimpp STATIC src/cvi.cpp)
+add_library(cvimpp STATIC
+  src/cvi_status.cpp
+  src/cvi_context.cpp
+  src/cvi_vpss.cpp
+  src/cvi_frame.cpp
+  src/cvi_capture.cpp
+  src/cvi_encoder.cpp)
 
 target_compile_features(cvimpp PUBLIC cxx_std_20)
 target_compile_definitions(cvimpp PRIVATE __CV181X__ ARCH_CV181X)
