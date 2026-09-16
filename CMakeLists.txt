@@ -1,16 +1,25 @@
-if(NOT GUIDANCE_MIDDLEWARE_DIR)
-  message(FATAL_ERROR
-    "GUIDANCE_MIDDLEWARE_DIR must point at the board middleware build directory")
+cmake_minimum_required(VERSION 3.16)
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  project(cvimpp LANGUAGES C CXX)
 endif()
 
-get_filename_component(_cvi_board_build "${GUIDANCE_MIDDLEWARE_DIR}/.." ABSOLUTE)
+set(CVIMPP_MIDDLEWARE_DIR "" CACHE PATH
+    "CVI middleware build directory (boards/<board>-sd/middleware)")
+
+if(NOT CVIMPP_MIDDLEWARE_DIR)
+  message(FATAL_ERROR
+    "CVIMPP_MIDDLEWARE_DIR must point at the board middleware build directory")
+endif()
+
+get_filename_component(_cvi_board_build "${CVIMPP_MIDDLEWARE_DIR}/.." ABSOLUTE)
 
 set(_cvi_include_dirs
-  ${GUIDANCE_MIDDLEWARE_DIR}/include
-  ${GUIDANCE_MIDDLEWARE_DIR}/include/isp/cv181x
-  ${GUIDANCE_MIDDLEWARE_DIR}/modules/isp/include/cv181x
-  ${GUIDANCE_MIDDLEWARE_DIR}/sample/common
-  ${GUIDANCE_MIDDLEWARE_DIR}/component/isp/common
+  ${CVIMPP_MIDDLEWARE_DIR}/include
+  ${CVIMPP_MIDDLEWARE_DIR}/include/isp/cv181x
+  ${CVIMPP_MIDDLEWARE_DIR}/modules/isp/include/cv181x
+  ${CVIMPP_MIDDLEWARE_DIR}/sample/common
+  ${CVIMPP_MIDDLEWARE_DIR}/component/isp/common
   ${_cvi_board_build}/kernel/riscv/usr/include)
 
 foreach(_include_dir IN LISTS _cvi_include_dirs)
@@ -20,30 +29,30 @@ foreach(_include_dir IN LISTS _cvi_include_dirs)
 endforeach()
 
 set(_cvi_archives
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsample.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libisp.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libisp_algo.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsns_full.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsns_sc035hgs.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libae.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libawb.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libaf.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_bin.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_bin_isp.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvi.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvpss.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvenc.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvdec.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libvo.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/librgn.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libsys.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libcvi_ive.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libmisc.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libgdc.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libraw_dump.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/libjson-c.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/3rd/libini.a
-  ${GUIDANCE_MIDDLEWARE_DIR}/lib/3rd/libcli.a)
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsample.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libisp.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libisp_algo.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsns_full.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsns_sc035hgs.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libae.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libawb.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libaf.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libcvi_bin.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libcvi_bin_isp.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libvi.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libvpss.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libvenc.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libvdec.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libvo.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/librgn.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsys.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libcvi_ive.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libmisc.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libgdc.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libraw_dump.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/libjson-c.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/3rd/libini.a
+  ${CVIMPP_MIDDLEWARE_DIR}/lib/3rd/libcli.a)
 
 foreach(_archive IN LISTS _cvi_archives)
   if(NOT EXISTS "${_archive}")

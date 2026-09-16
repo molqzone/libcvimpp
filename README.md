@@ -12,7 +12,7 @@ The middleware is prebuilt and lives in the image build cache, so the build
 needs the path to that directory:
 
 ```
-cmake -S . -B build -DGUIDANCE_MIDDLEWARE_DIR=<...>/boards/<board>/middleware
+cmake -S . -B build -DCVIMPP_MIDDLEWARE_DIR=<...>/boards/<board>/middleware
 cmake --build build
 ```
 
