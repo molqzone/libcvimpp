@@ -30,6 +30,21 @@ class Status
 inline constexpr int kInvalidArgument = -1;
 inline constexpr int kNotReady = -2;
 
+struct ManualIspConfig
+{
+  // Zero keeps the vendor automatic 3A loop.  A non-zero exposure time locks
+  // AE to that exposure (microseconds) with fixed gains, and locks AWB to the
+  // manual gains below.  Beacon detectors run in a dark scene and want the
+  // background suppressed instead of the AE lifting it to mid-grey.
+  std::uint32_t exposure_us{};
+  std::uint32_t again{1024};
+  std::uint32_t dgain{1024};
+  std::uint32_t isp_dgain{1024};
+  std::uint16_t wb_rgain{1024};
+  std::uint16_t wb_ggain{1024};
+  std::uint16_t wb_bgain{1024};
+};
+
 struct ContextConfig
 {
   // The common pool must be large enough for the sensor frame and the VPSS
@@ -40,6 +55,9 @@ struct ContextConfig
 
   // Null selects the middleware default (/mnt/data/sensor_cfg.ini).
   const char *sensor_ini_path{};
+
+  // Optional manual AE/AWB lock; the default leaves 3A automatic.
+  ManualIspConfig manual_isp{};
 };
 
 class Capture;

@@ -32,8 +32,6 @@ set(_cvi_archives
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libsample.a
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libisp.a
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libisp_algo.a
-  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsns_full.a
-  ${CVIMPP_MIDDLEWARE_DIR}/lib/libsns_sc035hgs.a
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libae.a
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libawb.a
   ${CVIMPP_MIDDLEWARE_DIR}/lib/libaf.a
@@ -76,11 +74,16 @@ target_include_directories(cvimpp
 target_include_directories(cvimpp SYSTEM PRIVATE ${_cvi_include_dirs})
 target_compile_options(cvimpp PRIVATE -Wall -Wextra -Wpedantic)
 
+target_link_directories(cvimpp PUBLIC
+  ${CVIMPP_MIDDLEWARE_DIR}/lib)
+
 # The CVI archives are mutually recursive. Keep the complete vendor closure in
 # the library target so applications only link cvimpp, while the group keeps
 # archive extraction deterministic on CMake versions without LINK_GROUP.
 target_link_libraries(cvimpp PUBLIC
   "-Wl,--start-group"
   ${_cvi_archives}
+  "-l:libsns_full.so"
+  "-l:libsns_sc035hgs.so"
   "-Wl,--end-group"
   atomic pthread dl m)
