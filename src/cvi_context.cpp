@@ -57,11 +57,22 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
     return false;
   }
   wb.bByPass = CVI_FALSE;
-  wb.enOpType = OP_TYPE_MANUAL;
-  wb.stManual.u16Rgain = manual.wb_rgain;
-  wb.stManual.u16Grgain = manual.wb_ggain;
-  wb.stManual.u16Gbgain = manual.wb_ggain;
-  wb.stManual.u16Bgain = manual.wb_bgain;
+  // Unity gains are not a white balance: they are "no correction", which under
+  // an LED or fluorescent illuminant leaves a green cast strong enough that a
+  // neutral lamp classifies as a green beacon.  Only lock AWB when a gain that
+  // actually corrects something is given; otherwise let the loop run, slowed
+  // down, so a neutral surface stays neutral.
+  const bool lock_wb = manual.wb_rgain != 0 && manual.wb_bgain != 0 &&
+                       (manual.wb_rgain != 1024 || manual.wb_bgain != 1024 ||
+                        manual.wb_ggain != 1024);
+  wb.enOpType = lock_wb ? OP_TYPE_MANUAL : OP_TYPE_AUTO;
+  if (lock_wb)
+  {
+    wb.stManual.u16Rgain = manual.wb_rgain;
+    wb.stManual.u16Grgain = manual.wb_ggain;
+    wb.stManual.u16Gbgain = manual.wb_ggain;
+    wb.stManual.u16Bgain = manual.wb_bgain;
+  }
   wb.u8AWBRunInterval = 12;
   if (CVI_ISP_SetWBAttr(pipe, &wb) != CVI_SUCCESS)
   {
@@ -85,10 +96,9 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
   }
 
   std::printf("[camera] manual ISP locked: exposure=%uus again=%u dgain=%u "
-              "ispdgain=%u wb=%u/%u/%u ae_interval=%u\n",
+              "ispdgain=%u wb=%s ae_interval=%u\n",
               manual.exposure_us, manual.again, manual.dgain, manual.isp_dgain,
-              manual.wb_rgain, manual.wb_ggain, manual.wb_bgain,
-              exposure.u8AERunInterval);
+              lock_wb ? "manual" : "auto", exposure.u8AERunInterval);
   return true;
 }
 
