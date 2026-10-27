@@ -77,6 +77,12 @@ class Context final
   [[nodiscard]] bool Ok() const { return status_.Ok(); }
   [[nodiscard]] Status Result() const { return status_; }
 
+  // Applies the fixed noise-reduction profile.  Call it once frames are
+  // flowing: the ISP rejects the attributes while the pipe is still coming up,
+  // and the vendor tuning pass that runs on the first frames would overwrite
+  // them anyway.
+  Status ApplyNoiseProfile();
+
  private:
   friend class Capture;
   friend class Encoder;

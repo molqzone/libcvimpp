@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 
 #include "cvi_ae.h"
@@ -80,6 +81,13 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
     return false;
   }
 
+  // The vendor noise curves index strength by ISO, and with manual AE the ISO
+  // never leaves the first bucket.  The defaults there are close to "off", and
+  // a 100-500 us frame is read-noise limited, so the flat background comes out
+  // as coloured speckle.  These are the values measured on this board: 24 of
+  // 255 for the three noise reductions, and sharpening pulled back from 32 to 8
+  // so it stops amplifying what is left.  A beacon is tens of pixels wide, so
+  // this costs no detection margin.
   // AF is not used by the fixed-focus SC035HGS; drop its statistics entirely.
   // AE/AWB statistics run at 1/6 and 1/12 of the frame rate, which is ample for
   // locked manual exposure/white balance.
@@ -331,6 +339,108 @@ Context::Context(ContextConfig config)
 
   impl_ = std::move(implementation);
   status_ = Status(CVI_SUCCESS);
+}
+
+
+Status Context::ApplyNoiseProfile()
+{
+  if (impl_ == nullptr || impl_->state == nullptr || !impl_->state->vi_started)
+  {
+    return Status(kNotReady);
+  }
+  const VI_PIPE pipe = impl_->state->pipe;
+
+  // The strength curves are indexed by ISO, and manual AE pins the ISO in the
+  // first bucket, so index 0 is the only entry that matters here.  The vendor
+  // defaults at that index are close to "off" while a 500 us frame is read
+  // noise limited, which is the coloured speckle.  Values are the ones measured
+  // on this board; the environment overrides exist so the three strengths can be
+  // swept without a rebuild.
+  const auto from_env = [](const char *name, int fallback) {
+    const char *text = std::getenv(name);
+    if (text == nullptr || text[0] == '\0')
+    {
+      return fallback;
+    }
+    const int value = std::atoi(text);
+    return value < 0 ? 0 : (value > 255 ? 255 : value);
+  };
+  const auto nr_strength = static_cast<CVI_U8>(from_env("GUIDANCE_NR", 24));
+  const auto tnr_strength = static_cast<CVI_U8>(from_env("GUIDANCE_TNR", 24));
+  const auto sharpen_gain = static_cast<CVI_U8>(from_env("GUIDANCE_SHARPEN", 8));
+
+  int nr_readback = -1;
+  int ynr_readback = -1;
+  int tnr_readback = -1;
+  int sharpen_readback = -1;
+
+  ISP_NR_ATTR_S nr{};
+  if (CVI_ISP_GetNRAttr(pipe, &nr) == CVI_SUCCESS)
+  {
+    std::printf("[camera] NRAttr op=%d before=%u\n", static_cast<int>(nr.enOpType),
+                nr.stAuto.NoiseSuppressStr[0]);
+    nr.enOpType = OP_TYPE_MANUAL;
+    nr.stManual.NoiseSuppressStr = nr_strength;
+    if (CVI_ISP_SetNRAttr(pipe, &nr) == CVI_SUCCESS)
+    {
+      ISP_NR_ATTR_S back{};
+      if (CVI_ISP_GetNRAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        nr_readback = back.stManual.NoiseSuppressStr;
+      }
+    }
+  }
+
+  ISP_YNR_ATTR_S ynr{};
+  if (CVI_ISP_GetYNRAttr(pipe, &ynr) == CVI_SUCCESS)
+  {
+    ynr.enOpType = OP_TYPE_MANUAL;
+    ynr.stManual.NoiseSuppressStr = nr_strength;
+    if (CVI_ISP_SetYNRAttr(pipe, &ynr) == CVI_SUCCESS)
+    {
+      ISP_YNR_ATTR_S back{};
+      if (CVI_ISP_GetYNRAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        ynr_readback = back.stManual.NoiseSuppressStr;
+      }
+    }
+  }
+
+  ISP_TNR_ATTR_S tnr{};
+  if (CVI_ISP_GetTNRAttr(pipe, &tnr) == CVI_SUCCESS)
+  {
+    tnr.enOpType = OP_TYPE_MANUAL;
+    tnr.stManual.TnrStrength0 = tnr_strength;
+    if (CVI_ISP_SetTNRAttr(pipe, &tnr) == CVI_SUCCESS)
+    {
+      ISP_TNR_ATTR_S back{};
+      if (CVI_ISP_GetTNRAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        tnr_readback = back.stManual.TnrStrength0;
+      }
+    }
+  }
+
+  ISP_SHARPEN_ATTR_S sharp{};
+  if (CVI_ISP_GetSharpenAttr(pipe, &sharp) == CVI_SUCCESS)
+  {
+    sharp.enOpType = OP_TYPE_MANUAL;
+    sharp.stManual.GlobalGain = sharpen_gain;
+    if (CVI_ISP_SetSharpenAttr(pipe, &sharp) == CVI_SUCCESS)
+    {
+      ISP_SHARPEN_ATTR_S back{};
+      if (CVI_ISP_GetSharpenAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        sharpen_readback = back.stManual.GlobalGain;
+      }
+    }
+  }
+
+  std::printf("[camera] noise profile nr=%d->%d ynr=%d->%d tnr=%d->%d sharpen=%d->%d\n",
+              nr_strength, nr_readback, nr_strength, ynr_readback, tnr_strength,
+              tnr_readback, sharpen_gain, sharpen_readback);
+  std::fflush(stdout);
+  return Status(CVI_SUCCESS);
 }
 
 Context::~Context() { impl_.reset(); }
