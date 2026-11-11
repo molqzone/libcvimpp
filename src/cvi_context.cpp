@@ -206,6 +206,18 @@ Context::Context(ContextConfig config)
     return;
   }
 
+  // The sample table this comes from asks the VI for a *mono* channel on this
+  // board even though the SC035HGS is a colour sensor: the image repo had to
+  // patch maix_mmf for the same reason ("use nv21 for color sc035hgs").  A mono
+  // VI channel means the ISP never runs the colour pipeline, so every chroma
+  // sample is 128 and a colour beacon can never be detected -- the preview looks
+  // grey and the detector sees nothing.
+  // libcvimpp owns this pipeline, so it has to make the same choice: ask for
+  // NV21 from the VI as well as from the VPSS channel.
+  state.vi_config.astViInfo[0].stChnInfo.enPixFormat = PIXEL_FORMAT_NV21;
+  std::printf("[camera] VI channel pixel format requested = %d (NV21=%d YUV400=%d)\n",
+              static_cast<int>(state.vi_config.astViInfo[0].stChnInfo.enPixFormat),
+              static_cast<int>(PIXEL_FORMAT_NV21), static_cast<int>(PIXEL_FORMAT_YUV_400));
   state.pipe = state.vi_config.astViInfo[0].stPipeInfo.aPipe[0];
   state.vi_channel = state.vi_config.astViInfo[0].stChnInfo.ViChn;
   state.vi_format = state.vi_config.astViInfo[0].stChnInfo.enPixFormat;
@@ -264,7 +276,18 @@ Context::Context(ContextConfig config)
 
   ISP_BIN_BYPASS_U bypass{};
   bypass.bitBypassFrameRate = CVI_TRUE;
-  result = CVI_ISP_BIN_SetBypassParams(CVI_BIN_ID_ISP0, &bypass);
+  const char *const bypass_env = std::getenv("GUIDANCE_ISP_BIN_BYPASS");
+  // Default on: without it the VI channel delivers nothing at all (measured:
+  // 0 frames, 0 timeouts).  The escape hatch stays so the colour bring-up can
+  // A/B it without a rebuild.
+  if (bypass_env == nullptr || bypass_env[0] != '0')
+  {
+    result = CVI_ISP_BIN_SetBypassParams(CVI_BIN_ID_ISP0, &bypass);
+  }
+  else
+  {
+    result = CVI_SUCCESS;
+  }
   std::printf("[camera] CVI_ISP_BIN_SetBypassParams=%d\n", result);
   if (result == CVI_SUCCESS)
   {
@@ -281,6 +304,65 @@ Context::Context(ContextConfig config)
     return;
   }
   state.vi_started = true;
+
+  // What the driver actually accepted for the VI channel, as opposed to what we
+  // asked for in the configuration: a YUV_400 channel here means the ISP writes
+  // mono into it no matter how its own colour parameters look.
+  {
+    VI_CHN_ATTR_S channel_attr{};
+    if (CVI_VI_GetChnAttr(state.pipe, state.vi_channel, &channel_attr) == CVI_SUCCESS)
+    {
+      std::printf("[camera] VI channel attr after start: fmt=%d size=%ux%u\n",
+                  static_cast<int>(channel_attr.enPixelFormat), channel_attr.stSize.u32Width,
+                  channel_attr.stSize.u32Height);
+    }
+    else
+    {
+      std::printf("[camera] CVI_VI_GetChnAttr failed\n");
+    }
+  }
+
+  // Colour bring-up probe: the frame this pipeline hands out has neutral chroma
+  // (every VU sample 128), which looks like "the beacon has no colour" to any
+  // detector.  The ISP's saturation is the first thing to rule out: a PQ bin that
+  // does not match the middleware can leave it at 0, and 0 is exactly a grey
+  // picture.  Read it always; GUIDANCE_ISP_SAT=<0..255> forces a manual value.
+  {
+    ISP_SATURATION_ATTR_S saturation{};
+    if (CVI_ISP_GetSaturationAttr(state.pipe, &saturation) == CVI_SUCCESS)
+    {
+      std::printf("[camera] ISP saturation: op=%d manual=%u\n",
+                  static_cast<int>(saturation.enOpType),
+                  static_cast<unsigned>(saturation.stManual.Saturation));
+    }
+    // The matrix that turns the demosaiced RGB into the output colour is the
+    // other classic way to get grey: a CCM of all zeros (or Enable=0 with an
+    // empty manual matrix) removes chroma without touching luma.
+    ISP_CCM_ATTR_S ccm{};
+    if (CVI_ISP_GetCCMAttr(state.pipe, &ccm) == CVI_SUCCESS)
+    {
+      std::printf("[camera] ISP CCM: enable=%d op=%d m=[%d %d %d %d %d %d %d %d %d]\n",
+                  static_cast<int>(ccm.Enable), static_cast<int>(ccm.enOpType),
+                  static_cast<int>(ccm.stManual.CCM[0]), static_cast<int>(ccm.stManual.CCM[1]),
+                  static_cast<int>(ccm.stManual.CCM[2]), static_cast<int>(ccm.stManual.CCM[3]),
+                  static_cast<int>(ccm.stManual.CCM[4]), static_cast<int>(ccm.stManual.CCM[5]),
+                  static_cast<int>(ccm.stManual.CCM[6]), static_cast<int>(ccm.stManual.CCM[7]),
+                  static_cast<int>(ccm.stManual.CCM[8]));
+    }
+
+    const char *const sat_env = std::getenv("GUIDANCE_ISP_SAT");
+    if (sat_env != nullptr)
+    {
+      const int value = std::atoi(sat_env);
+      if (value >= 0 && value <= 255)
+      {
+        saturation.enOpType = OP_TYPE_MANUAL;
+        saturation.stManual.Saturation = static_cast<CVI_U8>(value);
+        const CVI_S32 sat_result = CVI_ISP_SetSaturationAttr(state.pipe, &saturation);
+        std::printf("[camera] ISP saturation <- %d (result %d)\n", value, sat_result);
+      }
+    }
+  }
 
   // The PIC_SIZE table only knows the full sensor geometry, so a cropped sensor
   // mode (640x312, 640x256) is reported as 640x480 there.  Everything that
@@ -321,6 +403,12 @@ Context::Context(ContextConfig config)
   }
 
   ISP_PUB_ATTR_S pub_attr{};
+  if (CVI_ISP_GetPubAttr(state.pipe, &pub_attr) == CVI_SUCCESS)
+  {
+    std::printf("[camera] ISP pub attr: bayer=%d wdr=%d fps=%.1f\n",
+                static_cast<int>(pub_attr.enBayer), static_cast<int>(pub_attr.enWDRMode),
+                pub_attr.f32FrameRate);
+  }
   if (CVI_ISP_GetPubAttr(state.pipe, &pub_attr) == CVI_SUCCESS &&
       pub_attr.f32FrameRate >= 1.0f && pub_attr.f32FrameRate <= 1000.0f)
   {
@@ -377,8 +465,9 @@ Status Context::ApplyNoiseProfile()
   ISP_NR_ATTR_S nr{};
   if (CVI_ISP_GetNRAttr(pipe, &nr) == CVI_SUCCESS)
   {
-    std::printf("[camera] NRAttr op=%d before=%u\n", static_cast<int>(nr.enOpType),
-                nr.stAuto.NoiseSuppressStr[0]);
+    std::printf("[camera] NRAttr enable=%d op=%d before=%u\n", static_cast<int>(nr.Enable),
+                static_cast<int>(nr.enOpType), nr.stAuto.NoiseSuppressStr[0]);
+    nr.Enable = CVI_TRUE;
     nr.enOpType = OP_TYPE_MANUAL;
     nr.stManual.NoiseSuppressStr = nr_strength;
     if (CVI_ISP_SetNRAttr(pipe, &nr) == CVI_SUCCESS)
@@ -394,6 +483,9 @@ Status Context::ApplyNoiseProfile()
   ISP_YNR_ATTR_S ynr{};
   if (CVI_ISP_GetYNRAttr(pipe, &ynr) == CVI_SUCCESS)
   {
+    std::printf("[camera] YNRAttr enable=%d op=%d\n", static_cast<int>(ynr.Enable),
+                static_cast<int>(ynr.enOpType));
+    ynr.Enable = CVI_TRUE;
     ynr.enOpType = OP_TYPE_MANUAL;
     ynr.stManual.NoiseSuppressStr = nr_strength;
     if (CVI_ISP_SetYNRAttr(pipe, &ynr) == CVI_SUCCESS)
@@ -409,6 +501,9 @@ Status Context::ApplyNoiseProfile()
   ISP_TNR_ATTR_S tnr{};
   if (CVI_ISP_GetTNRAttr(pipe, &tnr) == CVI_SUCCESS)
   {
+    std::printf("[camera] TNRAttr enable=%d op=%d\n", static_cast<int>(tnr.Enable),
+                static_cast<int>(tnr.enOpType));
+    tnr.Enable = CVI_TRUE;
     tnr.enOpType = OP_TYPE_MANUAL;
     tnr.stManual.TnrStrength0 = tnr_strength;
     if (CVI_ISP_SetTNRAttr(pipe, &tnr) == CVI_SUCCESS)
@@ -421,9 +516,63 @@ Status Context::ApplyNoiseProfile()
     }
   }
 
+  // Saturation and black level do not change the signal-to-noise ratio, but they
+  // change what the noise looks like: lowering saturation turns the coloured
+  // speckle grey, and raising the black level clips the noisy floor of the dark
+  // areas.  Both are swept with the environment so the pair can be chosen by
+  // measurement instead of by eye.
+  const auto from_env_int = [](const char *name, int fallback, int lo, int hi) {
+    const char *text = std::getenv(name);
+    if (text == nullptr || text[0] == '\0')
+    {
+      return fallback;
+    }
+    const int value = std::atoi(text);
+    return value < lo ? lo : (value > hi ? hi : value);
+  };
+  const int saturation = from_env_int("GUIDANCE_SAT", 100, 0, 100);
+  const int black_level = from_env_int("GUIDANCE_BLACK", 0, 0, 255);
+  int saturation_readback = -1;
+  int black_readback = -1;
+  ISP_SATURATION_ATTR_S sat{};
+  if (CVI_ISP_GetSaturationAttr(pipe, &sat) == CVI_SUCCESS)
+  {
+    sat.enOpType = OP_TYPE_MANUAL;
+    sat.stManual.Saturation = static_cast<CVI_U8>(saturation);
+    if (CVI_ISP_SetSaturationAttr(pipe, &sat) == CVI_SUCCESS)
+    {
+      ISP_SATURATION_ATTR_S back{};
+      if (CVI_ISP_GetSaturationAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        saturation_readback = back.stManual.Saturation;
+      }
+    }
+  }
+  ISP_BLACK_LEVEL_ATTR_S black{};
+  if (CVI_ISP_GetBlackLevelAttr(pipe, &black) == CVI_SUCCESS)
+  {
+    black.Enable = CVI_TRUE;
+    black.enOpType = OP_TYPE_MANUAL;
+    const auto offset = static_cast<CVI_U16>(black_level * 4);
+    black.stManual.OffsetR = offset;
+    black.stManual.OffsetGr = offset;
+    black.stManual.OffsetGb = offset;
+    black.stManual.OffsetB = offset;
+    if (CVI_ISP_SetBlackLevelAttr(pipe, &black) == CVI_SUCCESS)
+    {
+      ISP_BLACK_LEVEL_ATTR_S back{};
+      if (CVI_ISP_GetBlackLevelAttr(pipe, &back) == CVI_SUCCESS)
+      {
+        black_readback = static_cast<int>(back.stManual.OffsetR);
+      }
+    }
+  }
+
   ISP_SHARPEN_ATTR_S sharp{};
   if (CVI_ISP_GetSharpenAttr(pipe, &sharp) == CVI_SUCCESS)
   {
+    std::printf("[camera] SharpenAttr enable=%d op=%d\n", static_cast<int>(sharp.Enable),
+                static_cast<int>(sharp.enOpType));
     sharp.enOpType = OP_TYPE_MANUAL;
     sharp.stManual.GlobalGain = sharpen_gain;
     if (CVI_ISP_SetSharpenAttr(pipe, &sharp) == CVI_SUCCESS)
