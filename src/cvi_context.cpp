@@ -1,5 +1,3 @@
-#include "cvi_internal.hpp"
-
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -8,6 +6,7 @@
 
 #include "cvi_ae.h"
 #include "cvi_awb.h"
+#include "cvi_internal.hpp"
 
 namespace cvimpp
 {
@@ -17,7 +16,7 @@ namespace
 // Lock AE to a fixed exposure and AWB to fixed gains.  Called once after the
 // VI/ISP pipeline is up; the sensor runs at a constant brightness afterwards,
 // which is what a fixed-threshold Lab detector wants.
-bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
+bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
 {
   if (manual.exposure_us == 0)
   {
@@ -63,9 +62,9 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
   // neutral lamp classifies as a green beacon.  Only lock AWB when a gain that
   // actually corrects something is given; otherwise let the loop run, slowed
   // down, so a neutral surface stays neutral.
-  const bool lock_wb = manual.wb_rgain != 0 && manual.wb_bgain != 0 &&
-                       (manual.wb_rgain != 1024 || manual.wb_bgain != 1024 ||
-                        manual.wb_ggain != 1024);
+  const bool lock_wb =
+      manual.wb_rgain != 0 && manual.wb_bgain != 0 &&
+      (manual.wb_rgain != 1024 || manual.wb_bgain != 1024 || manual.wb_ggain != 1024);
   wb.enOpType = lock_wb ? OP_TYPE_MANUAL : OP_TYPE_AUTO;
   if (lock_wb)
   {
@@ -103,10 +102,11 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig &manual)
     }
   }
 
-  std::printf("[camera] manual ISP locked: exposure=%uus again=%u dgain=%u "
-              "ispdgain=%u wb=%s ae_interval=%u\n",
-              manual.exposure_us, manual.again, manual.dgain, manual.isp_dgain,
-              lock_wb ? "manual" : "auto", exposure.u8AERunInterval);
+  std::printf(
+      "[camera] manual ISP locked: exposure=%uus again=%u dgain=%u "
+      "ispdgain=%u wb=%s ae_interval=%u\n",
+      manual.exposure_us, manual.again, manual.dgain, manual.isp_dgain,
+      lock_wb ? "manual" : "auto", exposure.u8AERunInterval);
   return true;
 }
 
@@ -150,7 +150,7 @@ Context::Context(ContextConfig config)
 
   auto implementation = std::make_unique<Impl>();
   implementation->state = std::make_shared<ContextState>();
-  auto &state = *implementation->state;
+  auto& state = *implementation->state;
 
   // Match the vendor test_mmf setup so the CVI_TRACE_LOG diagnostics emitted by
   // SAMPLE_PLAT_VI_INIT are visible when a stage fails.
@@ -217,7 +217,8 @@ Context::Context(ContextConfig config)
   state.vi_config.astViInfo[0].stChnInfo.enPixFormat = PIXEL_FORMAT_NV21;
   std::printf("[camera] VI channel pixel format requested = %d (NV21=%d YUV400=%d)\n",
               static_cast<int>(state.vi_config.astViInfo[0].stChnInfo.enPixFormat),
-              static_cast<int>(PIXEL_FORMAT_NV21), static_cast<int>(PIXEL_FORMAT_YUV_400));
+              static_cast<int>(PIXEL_FORMAT_NV21),
+              static_cast<int>(PIXEL_FORMAT_YUV_400));
   state.pipe = state.vi_config.astViInfo[0].stPipeInfo.aPipe[0];
   state.vi_channel = state.vi_config.astViInfo[0].stChnInfo.ViChn;
   state.vi_format = state.vi_config.astViInfo[0].stChnInfo.enPixFormat;
@@ -276,7 +277,7 @@ Context::Context(ContextConfig config)
 
   ISP_BIN_BYPASS_U bypass{};
   bypass.bitBypassFrameRate = CVI_TRUE;
-  const char *const bypass_env = std::getenv("GUIDANCE_ISP_BIN_BYPASS");
+  const char* const bypass_env = std::getenv("GUIDANCE_ISP_BIN_BYPASS");
   // Default on: without it the VI channel delivers nothing at all (measured:
   // 0 frames, 0 timeouts).  The escape hatch stays so the colour bring-up can
   // A/B it without a rebuild.
@@ -313,8 +314,8 @@ Context::Context(ContextConfig config)
     if (CVI_VI_GetChnAttr(state.pipe, state.vi_channel, &channel_attr) == CVI_SUCCESS)
     {
       std::printf("[camera] VI channel attr after start: fmt=%d size=%ux%u\n",
-                  static_cast<int>(channel_attr.enPixelFormat), channel_attr.stSize.u32Width,
-                  channel_attr.stSize.u32Height);
+                  static_cast<int>(channel_attr.enPixelFormat),
+                  channel_attr.stSize.u32Width, channel_attr.stSize.u32Height);
     }
     else
     {
@@ -341,16 +342,17 @@ Context::Context(ContextConfig config)
     ISP_CCM_ATTR_S ccm{};
     if (CVI_ISP_GetCCMAttr(state.pipe, &ccm) == CVI_SUCCESS)
     {
-      std::printf("[camera] ISP CCM: enable=%d op=%d m=[%d %d %d %d %d %d %d %d %d]\n",
-                  static_cast<int>(ccm.Enable), static_cast<int>(ccm.enOpType),
-                  static_cast<int>(ccm.stManual.CCM[0]), static_cast<int>(ccm.stManual.CCM[1]),
-                  static_cast<int>(ccm.stManual.CCM[2]), static_cast<int>(ccm.stManual.CCM[3]),
-                  static_cast<int>(ccm.stManual.CCM[4]), static_cast<int>(ccm.stManual.CCM[5]),
-                  static_cast<int>(ccm.stManual.CCM[6]), static_cast<int>(ccm.stManual.CCM[7]),
-                  static_cast<int>(ccm.stManual.CCM[8]));
+      std::printf(
+          "[camera] ISP CCM: enable=%d op=%d m=[%d %d %d %d %d %d %d %d %d]\n",
+          static_cast<int>(ccm.Enable), static_cast<int>(ccm.enOpType),
+          static_cast<int>(ccm.stManual.CCM[0]), static_cast<int>(ccm.stManual.CCM[1]),
+          static_cast<int>(ccm.stManual.CCM[2]), static_cast<int>(ccm.stManual.CCM[3]),
+          static_cast<int>(ccm.stManual.CCM[4]), static_cast<int>(ccm.stManual.CCM[5]),
+          static_cast<int>(ccm.stManual.CCM[6]), static_cast<int>(ccm.stManual.CCM[7]),
+          static_cast<int>(ccm.stManual.CCM[8]));
     }
 
-    const char *const sat_env = std::getenv("GUIDANCE_ISP_SAT");
+    const char* const sat_env = std::getenv("GUIDANCE_ISP_SAT");
     if (sat_env != nullptr)
     {
       const int value = std::atoi(sat_env);
@@ -388,8 +390,8 @@ Context::Context(ContextConfig config)
       if (mode_size.u32Width != state.sensor_size.u32Width ||
           mode_size.u32Height != state.sensor_size.u32Height)
       {
-        std::printf("[camera] VI mode %ux%u overrides PIC table %ux%u\n", mode_size.u32Width,
-                    mode_size.u32Height, state.sensor_size.u32Width,
+        std::printf("[camera] VI mode %ux%u overrides PIC table %ux%u\n",
+                    mode_size.u32Width, mode_size.u32Height, state.sensor_size.u32Width,
                     state.sensor_size.u32Height);
       }
       state.sensor_size = mode_size;
@@ -429,7 +431,6 @@ Context::Context(ContextConfig config)
   status_ = Status(CVI_SUCCESS);
 }
 
-
 Status Context::ApplyNoiseProfile()
 {
   if (impl_ == nullptr || impl_->state == nullptr || !impl_->state->vi_started)
@@ -444,8 +445,9 @@ Status Context::ApplyNoiseProfile()
   // noise limited, which is the coloured speckle.  Values are the ones measured
   // on this board; the environment overrides exist so the three strengths can be
   // swept without a rebuild.
-  const auto from_env = [](const char *name, int fallback) {
-    const char *text = std::getenv(name);
+  const auto from_env = [](const char* name, int fallback)
+  {
+    const char* text = std::getenv(name);
     if (text == nullptr || text[0] == '\0')
     {
       return fallback;
@@ -465,8 +467,9 @@ Status Context::ApplyNoiseProfile()
   ISP_NR_ATTR_S nr{};
   if (CVI_ISP_GetNRAttr(pipe, &nr) == CVI_SUCCESS)
   {
-    std::printf("[camera] NRAttr enable=%d op=%d before=%u\n", static_cast<int>(nr.Enable),
-                static_cast<int>(nr.enOpType), nr.stAuto.NoiseSuppressStr[0]);
+    std::printf("[camera] NRAttr enable=%d op=%d before=%u\n",
+                static_cast<int>(nr.Enable), static_cast<int>(nr.enOpType),
+                nr.stAuto.NoiseSuppressStr[0]);
     nr.Enable = CVI_TRUE;
     nr.enOpType = OP_TYPE_MANUAL;
     nr.stManual.NoiseSuppressStr = nr_strength;
@@ -521,8 +524,9 @@ Status Context::ApplyNoiseProfile()
   // speckle grey, and raising the black level clips the noisy floor of the dark
   // areas.  Both are swept with the environment so the pair can be chosen by
   // measurement instead of by eye.
-  const auto from_env_int = [](const char *name, int fallback, int lo, int hi) {
-    const char *text = std::getenv(name);
+  const auto from_env_int = [](const char* name, int fallback, int lo, int hi)
+  {
+    const char* text = std::getenv(name);
     if (text == nullptr || text[0] == '\0')
     {
       return fallback;
@@ -585,9 +589,12 @@ Status Context::ApplyNoiseProfile()
     }
   }
 
-  std::printf("[camera] noise profile nr=%d->%d ynr=%d->%d tnr=%d->%d sharpen=%d->%d\n",
-              nr_strength, nr_readback, nr_strength, ynr_readback, tnr_strength,
-              tnr_readback, sharpen_gain, sharpen_readback);
+  std::printf(
+      "[camera] noise profile nr=%d->%d ynr=%d->%d tnr=%d->%d "
+      "sharpen=%d->%d sat=%d->%d black=%d->%d\n",
+      nr_strength, nr_readback, nr_strength, ynr_readback, tnr_strength, tnr_readback,
+      sharpen_gain, sharpen_readback, saturation, saturation_readback, black_level * 4,
+      black_readback);
   std::fflush(stdout);
   return Status(CVI_SUCCESS);
 }
