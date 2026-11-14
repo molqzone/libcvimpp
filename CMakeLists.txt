@@ -67,7 +67,14 @@ add_library(cvimpp STATIC
   src/cvi_encoder.cpp)
 
 target_compile_features(cvimpp PUBLIC cxx_std_20)
-target_compile_definitions(cvimpp PRIVATE __CV181X__ ARCH_CV181X)
+# 与中间件库保持**同一组传感器宏**：`SAMPLE_SNS_TYPE_E` 的编号本身是被这些宏包着的，
+# 应用侧少定义一个，它看到的枚举就和库里差一位——ini 在库里解析成第 N 项，应用把同一个
+# 数值传回去却对应另一个传感器，查表于是返回 NULL（"fail to find pstSnsObj"）。
+# Keep the **same sensor macros as the middleware library**: `SAMPLE_SNS_TYPE_E`'s
+# numbering is itself guarded by them, so an application that defines one fewer sees a
+# different enum -- the ini resolves to entry N inside the library while the same number means
+# another sensor when it comes back, and the lookup returns NULL.
+target_compile_definitions(cvimpp PRIVATE __CV181X__ ARCH_CV181X SENSOR_SMS_SC035HGS)
 target_include_directories(cvimpp
   PUBLIC ${CMAKE_CURRENT_LIST_DIR}/include
   PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
