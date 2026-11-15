@@ -193,6 +193,21 @@ Context::Context(ContextConfig config)
     return;
   }
 
+#if defined(SENSOR_SMS_SC035HGS)
+  // `sensor_cfg.ini` names SMS_SC035HGS_MIPI_480P_180FPS_10BIT, and that name is
+  // resolved by `snsr_type_name[]` -- a table that lives in `libsns_full.so`,
+  // i.e. in the *middleware* the runtime loads.  The index it returns is then
+  // compared by `SAMPLE_COMM_SNS_GetSnsObj` against the enumerator *this* library
+  // was compiled against.  A middleware older than the mode resolves the name to
+  // an index it does not know, so the lookup returns NULL and
+  // `SAMPLE_PLAT_VI_INIT()` fails with -1 and no further message -- which is
+  // exactly what happened while this build still pointed at a stale middleware
+  // checkout.  Naming the enumerator turns that silent mismatch into a build
+  // error.
+  static_assert(SMS_SC035HGS_MIPI_480P_180FPS_10BIT < SAMPLE_SNS_TYPE_BUTT,
+                "the linked CVI middleware does not provide the 180 fps SC035HGS mode");
+#endif
+
   PIC_SIZE_E sensor_pic_size{};
   result = SAMPLE_COMM_VI_GetSizeBySensor(ini.enSnsType[0], &sensor_pic_size);
   if (result == CVI_SUCCESS)
