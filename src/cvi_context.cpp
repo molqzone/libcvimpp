@@ -42,7 +42,7 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
   exposure.stManual.enISPDGainOpType = OP_TYPE_MANUAL;
   exposure.stManual.u32ISPDGain = manual.isp_dgain;
   // Manual AE/AWB do not need the 3A libraries at the full frame rate.  At
-  // 120 fps the per-frame 3A/statistics work is the dominant user-space cost.
+  // 180 fps the per-frame 3A/statistics work is the dominant user-space cost.
   exposure.u8AERunInterval = 12;
   if (CVI_ISP_SetExposureAttr(pipe, &exposure) != CVI_SUCCESS)
   {
@@ -194,7 +194,7 @@ Context::Context(ContextConfig config)
   }
 
 #if defined(SENSOR_SMS_SC035HGS)
-  // `sensor_cfg.ini` names SMS_SC035HGS_MIPI_480P_120FPS_12BIT, and that name is
+  // `sensor_cfg.ini` names SMS_SC035HGS_MIPI_480P_180FPS_10BIT, and that name is
   // resolved by `snsr_type_name[]` -- a table that lives in `libsns_full.so`,
   // i.e. in the *middleware* the runtime loads.  The index it returns is then
   // compared by `SAMPLE_COMM_SNS_GetSnsObj` against the enumerator *this* library
@@ -204,8 +204,8 @@ Context::Context(ContextConfig config)
   // exactly what happened while this build still pointed at a stale middleware
   // checkout.  Naming the enumerator turns that silent mismatch into a build
   // error.
-  static_assert(SMS_SC035HGS_MIPI_480P_120FPS_12BIT < SAMPLE_SNS_TYPE_BUTT,
-                "the linked CVI middleware does not provide the 120 fps SC035HGS mode");
+  static_assert(SMS_SC035HGS_MIPI_480P_180FPS_10BIT < SAMPLE_SNS_TYPE_BUTT,
+                "the linked CVI middleware does not provide the 180 fps SC035HGS mode");
 #endif
 
   PIC_SIZE_E sensor_pic_size{};
@@ -253,7 +253,7 @@ Context::Context(ContextConfig config)
   // Mirror the working test_mmf VB layout.  The VI channel does not only need
   // its own block: the vendor VI/VPSS/VENC path also allocates from the VO,
   // user, encoder and decoder pools during enable/start, so a single-pool
-  // configuration fails with vi_sdk_enable_chn ENOMEM at 120 fps.
+  // configuration fails with vi_sdk_enable_chn ENOMEM at 180 fps.
   // On this board the vendor ION heap is below 40 MiB, so test_mmf's
   // priv_param_init() builds only two pools (VI + H.264 encode).  Mirror that
   // exact layout; extra pools make CVI_VB_SetConfig fail.
