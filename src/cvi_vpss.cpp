@@ -134,56 +134,57 @@ std::shared_ptr<VpssResource> CreateVpssResource(
 {
   auto resource = std::make_shared<VpssResource>();
   resource->context = context;
+
+  const auto fail = [&](const char* stage, int code)
+  {
+    std::printf("[camera] vpss(%d,%d) %s failed: %d\n", resource->group,
+                resource->channel, stage, code);
+    if (error != nullptr)
+    {
+      *error = code;
+    }
+    return std::shared_ptr<VpssResource>{};
+  };
+
   resource->group = CVI_VPSS_GetAvailableGrp();
   if (resource->group < 0)
   {
-    if (error != nullptr)
-    {
-      *error = resource->group;
-    }
-    return {};
+    return fail("GetAvailableGrp", resource->group);
   }
 
   int result = CVI_VPSS_CreateGrp(resource->group, &group_attr);
-  std::printf("[camera] vpss(%d,%d) max %ux%u src=%d dst=%d CreateGrp=%d\n",
-              resource->group, resource->channel, group_attr.u32MaxW, group_attr.u32MaxH,
-              channel_attr.stFrameRate.s32SrcFrameRate,
-              channel_attr.stFrameRate.s32DstFrameRate, result);
   if (result != CVI_SUCCESS)
   {
-    if (error != nullptr)
-    {
-      *error = result;
-    }
-    return {};
+    return fail("CreateGrp", result);
   }
   resource->group_created = true;
 
-  result = CVI_VPSS_ResetGrp(resource->group);
-  std::printf("[camera] CVI_VPSS_ResetGrp=%d\n", result);
-  if (result == CVI_SUCCESS)
+  if ((result = CVI_VPSS_ResetGrp(resource->group)) != CVI_SUCCESS)
   {
-    result = CVI_VPSS_SetChnAttr(resource->group, resource->channel, &channel_attr);
-    std::printf("[camera] CVI_VPSS_SetChnAttr=%d\n", result);
+    return fail("ResetGrp", result);
   }
-  if (result == CVI_SUCCESS && crop != nullptr)
+  if ((result = CVI_VPSS_SetChnAttr(resource->group, resource->channel, &channel_attr)) !=
+      CVI_SUCCESS)
   {
-    result = CVI_VPSS_SetChnCrop(resource->group, resource->channel, crop);
-    std::printf("[camera] CVI_VPSS_SetChnCrop=%d\n", result);
+    return fail("SetChnAttr", result);
   }
-  if (result == CVI_SUCCESS)
+  if (crop != nullptr && (result = CVI_VPSS_SetChnCrop(resource->group, resource->channel,
+                                                       crop)) != CVI_SUCCESS)
   {
-    result = CVI_VPSS_EnableChn(resource->group, resource->channel);
-    std::printf("[camera] CVI_VPSS_EnableChn=%d\n", result);
-    resource->channel_enabled = result == CVI_SUCCESS;
+    return fail("SetChnCrop", result);
   }
-  if (result == CVI_SUCCESS)
+  if ((result = CVI_VPSS_EnableChn(resource->group, resource->channel)) != CVI_SUCCESS)
   {
-    result = CVI_VPSS_StartGrp(resource->group);
-    std::printf("[camera] CVI_VPSS_StartGrp=%d\n", result);
-    resource->group_started = result == CVI_SUCCESS;
+    return fail("EnableChn", result);
   }
-  if (result == CVI_SUCCESS && bind_vi)
+  resource->channel_enabled = true;
+  if ((result = CVI_VPSS_StartGrp(resource->group)) != CVI_SUCCESS)
+  {
+    return fail("StartGrp", result);
+  }
+  resource->group_started = true;
+
+  if (bind_vi)
   {
     MMF_CHN_S source{};
     source.enModId = CVI_ID_VI;
@@ -195,21 +196,17 @@ std::shared_ptr<VpssResource> CreateVpssResource(
     destination.s32DevId = resource->group;
     destination.s32ChnId = resource->channel;
 
-    result = CVI_SYS_Bind(&source, &destination);
-    std::printf("[camera] CVI_SYS_Bind vi(%d,%d)->vpss(%d,%d)=%d\n", source.s32DevId,
-                source.s32ChnId, destination.s32DevId, destination.s32ChnId, result);
-    resource->vi_bound = result == CVI_SUCCESS;
-  }
-
-  if (result != CVI_SUCCESS)
-  {
-    if (error != nullptr)
+    if ((result = CVI_SYS_Bind(&source, &destination)) != CVI_SUCCESS)
     {
-      *error = result;
+      return fail("Bind", result);
     }
-    return {};
+    resource->vi_bound = true;
   }
 
+  std::printf("[camera] vpss(%d,%d) max %ux%u src=%d dst=%d ready\n", resource->group,
+              resource->channel, group_attr.u32MaxW, group_attr.u32MaxH,
+              channel_attr.stFrameRate.s32SrcFrameRate,
+              channel_attr.stFrameRate.s32DstFrameRate);
   if (error != nullptr)
   {
     *error = CVI_SUCCESS;

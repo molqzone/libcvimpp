@@ -77,12 +77,6 @@ class Context final
   [[nodiscard]] bool Ok() const { return status_.Ok(); }
   [[nodiscard]] Status Result() const { return status_; }
 
-  // Applies the fixed noise-reduction profile.  Call it once frames are
-  // flowing: the ISP rejects the attributes while the pipe is still coming up,
-  // and the vendor tuning pass that runs on the first frames would overwrite
-  // them anyway.
-  Status ApplyNoiseProfile();
-
  private:
   friend class Capture;
   friend class Encoder;
@@ -118,18 +112,6 @@ struct CaptureConfig
   FitMode fit{FitMode::CROP};
 };
 
-struct FrameView
-{
-  const std::uint8_t* data{};
-  std::size_t size{};
-  int width{};
-  int height{};
-  PixelFormat format{PixelFormat::UNKNOWN};
-
-  [[nodiscard]] bool Valid() const { return data != nullptr && size != 0; }
-  [[nodiscard]] std::span<const std::uint8_t> Bytes() const { return {data, size}; }
-};
-
 class Frame final
 {
  public:
@@ -152,10 +134,6 @@ class Frame final
   [[nodiscard]] int Width() const { return width_; }
   [[nodiscard]] int Height() const { return height_; }
   [[nodiscard]] PixelFormat Format() const { return format_; }
-  [[nodiscard]] FrameView View() const
-  {
-    return FrameView{data_, size_, width_, height_, format_};
-  }
 
   // Returns the vendor frame to the VPSS resource it came from.  Safe to call
   // repeatedly.  A frame must be released before the Capture or Encoder that
