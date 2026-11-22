@@ -65,7 +65,7 @@ Capture::Capture(Context& context, CaptureConfig config) : context_(&context)
 
 Capture::~Capture() { impl_.reset(); }
 
-int Capture::Channel() const
+int Capture::Group() const
 {
   return impl_ != nullptr && impl_->source != nullptr ? impl_->source->group : -1;
 }

@@ -168,7 +168,8 @@ class Capture final
 
   [[nodiscard]] bool Ok() const { return status_.Ok(); }
   [[nodiscard]] Status Result() const { return status_; }
-  [[nodiscard]] int Channel() const;
+  /// @brief VPSS group this capture owns; a group is a pipeline, not a channel.
+  [[nodiscard]] int Group() const;
   [[nodiscard]] PixelFormat Format() const;
 
   // The returned frame owns the mapped view until Release() or destruction.
@@ -201,30 +202,20 @@ struct EncoderConfig
   int jpg_quality{0};
 };
 
-struct EncodedPack
-{
-  [[nodiscard]] std::span<const std::uint8_t> Bytes() const
-  {
-    return std::span<const std::uint8_t>(data, size);
-  }
-
- private:
-  friend class EncodedAccessUnitView;
-  friend class Encoder;
-  const std::uint8_t* data{};
-  std::size_t size{};
-};
-
 class EncodedAccessUnitView final
 {
  public:
   [[nodiscard]] std::size_t PackCount() const { return count_; }
-  [[nodiscard]] std::span<const std::uint8_t> Pack(std::size_t index) const;
+  // Out-of-range indices return an empty span instead of reading past `count_`.
+  [[nodiscard]] std::span<const std::uint8_t> Pack(std::size_t index) const
+  {
+    return index < count_ ? packs_[index] : std::span<const std::uint8_t>{};
+  }
 
  private:
   friend class Encoder;
 
-  std::array<EncodedPack, 8> packs_{};
+  std::array<std::span<const std::uint8_t>, 8> packs_{};
   std::size_t count_{};
 };
 

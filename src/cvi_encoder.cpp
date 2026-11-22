@@ -7,6 +7,23 @@
 
 namespace cvimpp
 {
+namespace
+{
+
+// H.264 and H.265 expose the same CBR fields under different struct names.
+template <class RcAttr>
+void ConfigureCbr(RcAttr& rc, const EncoderConfig& config)
+{
+  rc.u32Gop = static_cast<CVI_U32>(config.gop);
+  rc.u32StatTime = 2;
+  rc.u32SrcFrameRate = static_cast<CVI_U32>(config.input_fps);
+  rc.fr32DstFrameRate = static_cast<CVI_FLOAT>(config.output_fps);
+  rc.u32BitRate = static_cast<CVI_U32>(config.bitrate_kbps);
+  rc.bVariFpsEn = CVI_FALSE;
+}
+
+}  // namespace
+
 namespace detail
 {
 
@@ -47,15 +64,6 @@ EncoderState::~EncoderState() { ReleaseVenc(*this); }
 
 }  // namespace detail
 
-std::span<const std::uint8_t> EncodedAccessUnitView::Pack(std::size_t index) const
-{
-  if (index >= count_)
-  {
-    return {};
-  }
-  return packs_[index].Bytes();
-}
-
 Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
 {
   using namespace detail;
@@ -91,37 +99,22 @@ Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
     channel_attr.stVencAttr.stAttrJpege.enReceiveMode = VENC_PIC_RECEIVE_SINGLE;
     channel_attr.stRcAttr.enRcMode = VENC_RC_MODE_MJPEGFIXQP;
   }
-  else if (payload == PT_H264)
-  {
-    channel_attr.stVencAttr.bEsBufQueueEn = CVI_TRUE;
-    channel_attr.stVencAttr.bIsoSendFrmEn = CVI_TRUE;
-    channel_attr.stGopAttr.enGopMode = VENC_GOPMODE_NORMALP;
-    channel_attr.stGopAttr.stNormalP.s32IPQpDelta = 2;
-    channel_attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
-    channel_attr.stRcAttr.stH264Cbr.u32Gop = static_cast<CVI_U32>(config.gop);
-    channel_attr.stRcAttr.stH264Cbr.u32StatTime = 2;
-    channel_attr.stRcAttr.stH264Cbr.u32SrcFrameRate =
-        static_cast<CVI_U32>(config.input_fps);
-    channel_attr.stRcAttr.stH264Cbr.fr32DstFrameRate = config.output_fps;
-    channel_attr.stRcAttr.stH264Cbr.u32BitRate =
-        static_cast<CVI_U32>(config.bitrate_kbps);
-    channel_attr.stRcAttr.stH264Cbr.bVariFpsEn = CVI_FALSE;
-  }
   else
   {
     channel_attr.stVencAttr.bEsBufQueueEn = CVI_TRUE;
     channel_attr.stVencAttr.bIsoSendFrmEn = CVI_TRUE;
     channel_attr.stGopAttr.enGopMode = VENC_GOPMODE_NORMALP;
     channel_attr.stGopAttr.stNormalP.s32IPQpDelta = 2;
-    channel_attr.stRcAttr.enRcMode = VENC_RC_MODE_H265CBR;
-    channel_attr.stRcAttr.stH265Cbr.u32Gop = static_cast<CVI_U32>(config.gop);
-    channel_attr.stRcAttr.stH265Cbr.u32StatTime = 2;
-    channel_attr.stRcAttr.stH265Cbr.u32SrcFrameRate =
-        static_cast<CVI_U32>(config.input_fps);
-    channel_attr.stRcAttr.stH265Cbr.fr32DstFrameRate = config.output_fps;
-    channel_attr.stRcAttr.stH265Cbr.u32BitRate =
-        static_cast<CVI_U32>(config.bitrate_kbps);
-    channel_attr.stRcAttr.stH265Cbr.bVariFpsEn = CVI_FALSE;
+    if (payload == PT_H264)
+    {
+      channel_attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+      ConfigureCbr(channel_attr.stRcAttr.stH264Cbr, config);
+    }
+    else
+    {
+      channel_attr.stRcAttr.enRcMode = VENC_RC_MODE_H265CBR;
+      ConfigureCbr(channel_attr.stRcAttr.stH265Cbr, config);
+    }
   }
 
   auto implementation = std::make_unique<Impl>();
@@ -236,13 +229,7 @@ Status Encoder::Push(const Frame& frame)
 {
   using namespace detail;
 
-  if (!Ok() || impl_ == nullptr || impl_->state == nullptr || !frame.Valid() ||
-      frame.slot_ == nullptr || frame.slot_->owner == nullptr ||
-      frame.slot_->owner->context == nullptr ||
-      frame.slot_->owner->context.get() != impl_->state->context.get() ||
-      frame.format_ != impl_->state->input_format || frame.data_ == nullptr ||
-      frame.width_ != impl_->state->width || frame.height_ != impl_->state->height ||
-      impl_->state->frame_pending)
+  if (!Ok() || impl_ == nullptr || !frame.Valid() || impl_->state->frame_pending)
   {
     return Status(INVALID_ARGUMENT);
   }
@@ -338,8 +325,8 @@ Status Encoder::Consume(AccessUnitCallback callback, void* context)
     {
       return Status(INVALID_ARGUMENT);
     }
-    view.packs_[index].data = pack.pu8Addr + pack.u32Offset;
-    view.packs_[index].size = pack.u32Len - pack.u32Offset;
+    view.packs_[index] = std::span<const std::uint8_t>(pack.pu8Addr + pack.u32Offset,
+                                                       pack.u32Len - pack.u32Offset);
   }
 
   callback(context, view);
