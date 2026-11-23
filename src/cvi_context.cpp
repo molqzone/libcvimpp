@@ -26,7 +26,7 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
   ISP_EXPOSURE_ATTR_S exposure{};
   if (CVI_ISP_GetExposureAttr(pipe, &exposure) != CVI_SUCCESS)
   {
-    std::printf("[camera] CVI_ISP_GetExposureAttr failed\n");
+    CVIMPP_ERROR("CVI_ISP_GetExposureAttr failed\n");
     return false;
   }
   exposure.bByPass = CVI_FALSE;
@@ -46,14 +46,14 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
   exposure.u8AERunInterval = 12;
   if (CVI_ISP_SetExposureAttr(pipe, &exposure) != CVI_SUCCESS)
   {
-    std::printf("[camera] CVI_ISP_SetExposureAttr failed\n");
+    CVIMPP_ERROR("CVI_ISP_SetExposureAttr failed\n");
     return false;
   }
 
   ISP_WB_ATTR_S wb{};
   if (CVI_ISP_GetWBAttr(pipe, &wb) != CVI_SUCCESS)
   {
-    std::printf("[camera] CVI_ISP_GetWBAttr failed\n");
+    CVIMPP_ERROR("CVI_ISP_GetWBAttr failed\n");
     return false;
   }
   wb.bByPass = CVI_FALSE;
@@ -76,7 +76,7 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
   wb.u8AWBRunInterval = 12;
   if (CVI_ISP_SetWBAttr(pipe, &wb) != CVI_SUCCESS)
   {
-    std::printf("[camera] CVI_ISP_SetWBAttr failed\n");
+    CVIMPP_ERROR("CVI_ISP_SetWBAttr failed\n");
     return false;
   }
 
@@ -92,12 +92,12 @@ bool ApplyManualIsp(VI_PIPE pipe, const ManualIspConfig& manual)
     ctrl.u32AFStatIntvl = 0;
     if (CVI_ISP_SetCtrlParam(pipe, &ctrl) != CVI_SUCCESS)
     {
-      std::printf("[camera] CVI_ISP_SetCtrlParam failed\n");
+      CVIMPP_WARN("CVI_ISP_SetCtrlParam failed\n");
     }
   }
 
-  std::printf(
-      "[camera] manual ISP locked: exposure=%uus again=%u dgain=%u "
+  CVIMPP_INFO(
+      "manual ISP locked: exposure=%uus again=%u dgain=%u "
       "ispdgain=%u wb=%s ae_interval=%u\n",
       manual.exposure_us, manual.again, manual.dgain, manual.isp_dgain,
       lock_wb ? "manual" : "auto", exposure.u8AERunInterval);
@@ -224,7 +224,7 @@ Context::Context(ContextConfig config, Status* error)
   // libcvimpp owns this pipeline, so it has to make the same choice: ask for
   // NV21 from the VI as well as from the VPSS channel.
   state.vi_config.astViInfo[0].stChnInfo.enPixFormat = PIXEL_FORMAT_NV21;
-  std::printf("[camera] VI channel pixel format requested = %d (NV21=%d YUV400=%d)\n",
+  CVIMPP_INFO("VI channel pixel format requested = %d (NV21=%d YUV400=%d)\n",
               static_cast<int>(state.vi_config.astViInfo[0].stChnInfo.enPixFormat),
               static_cast<int>(PIXEL_FORMAT_NV21),
               static_cast<int>(PIXEL_FORMAT_YUV_400));
@@ -263,19 +263,19 @@ Context::Context(ContextConfig config, Status* error)
   // Use the vendor platform entry point here, but report the exact failing
   // VB/SYS stage because CVI_TRACE_LOG is not visible in the app log.
   result = CVI_VB_SetConfig(&vb_config);
-  std::printf("[camera] CVI_VB_SetConfig=%d\n", result);
+  CVIMPP_INFO("CVI_VB_SetConfig=%d\n", result);
   state.vb_started = false;
   state.system_started = false;
   if (result == CVI_SUCCESS)
   {
     result = CVI_VB_Init();
-    std::printf("[camera] CVI_VB_Init=%d\n", result);
+    CVIMPP_INFO("CVI_VB_Init=%d\n", result);
     state.vb_started = result == CVI_SUCCESS;
   }
   if (result == CVI_SUCCESS)
   {
     result = CVI_SYS_Init();
-    std::printf("[camera] CVI_SYS_Init=%d\n", result);
+    CVIMPP_INFO("CVI_SYS_Init=%d\n", result);
     state.system_started = result == CVI_SUCCESS;
   }
   if (result != CVI_SUCCESS)
@@ -298,11 +298,11 @@ Context::Context(ContextConfig config, Status* error)
   {
     result = CVI_SUCCESS;
   }
-  std::printf("[camera] CVI_ISP_BIN_SetBypassParams=%d\n", result);
+  CVIMPP_INFO("CVI_ISP_BIN_SetBypassParams=%d\n", result);
   if (result == CVI_SUCCESS)
   {
     result = SAMPLE_PLAT_VI_INIT(&state.vi_config);
-    std::printf("[camera] SAMPLE_PLAT_VI_INIT=%d\n", result);
+    CVIMPP_INFO("SAMPLE_PLAT_VI_INIT=%d\n", result);
   }
   if (result != CVI_SUCCESS)
   {
@@ -322,13 +322,13 @@ Context::Context(ContextConfig config, Status* error)
     VI_CHN_ATTR_S channel_attr{};
     if (CVI_VI_GetChnAttr(state.pipe, state.vi_channel, &channel_attr) == CVI_SUCCESS)
     {
-      std::printf("[camera] VI channel attr after start: fmt=%d size=%ux%u\n",
+      CVIMPP_INFO("VI channel attr after start: fmt=%d size=%ux%u\n",
                   static_cast<int>(channel_attr.enPixelFormat),
                   channel_attr.stSize.u32Width, channel_attr.stSize.u32Height);
     }
     else
     {
-      std::printf("[camera] CVI_VI_GetChnAttr failed\n");
+      CVIMPP_WARN("CVI_VI_GetChnAttr failed\n");
     }
   }
 
@@ -341,7 +341,7 @@ Context::Context(ContextConfig config, Status* error)
     ISP_SATURATION_ATTR_S saturation{};
     if (CVI_ISP_GetSaturationAttr(state.pipe, &saturation) == CVI_SUCCESS)
     {
-      std::printf("[camera] ISP saturation: op=%d manual=%u\n",
+      CVIMPP_INFO("ISP saturation: op=%d manual=%u\n",
                   static_cast<int>(saturation.enOpType),
                   static_cast<unsigned>(saturation.stManual.Saturation));
     }
@@ -351,8 +351,8 @@ Context::Context(ContextConfig config, Status* error)
     ISP_CCM_ATTR_S ccm{};
     if (CVI_ISP_GetCCMAttr(state.pipe, &ccm) == CVI_SUCCESS)
     {
-      std::printf(
-          "[camera] ISP CCM: enable=%d op=%d m=[%d %d %d %d %d %d %d %d %d]\n",
+      CVIMPP_INFO(
+          "ISP CCM: enable=%d op=%d m=[%d %d %d %d %d %d %d %d %d]\n",
           static_cast<int>(ccm.Enable), static_cast<int>(ccm.enOpType),
           static_cast<int>(ccm.stManual.CCM[0]), static_cast<int>(ccm.stManual.CCM[1]),
           static_cast<int>(ccm.stManual.CCM[2]), static_cast<int>(ccm.stManual.CCM[3]),
@@ -370,7 +370,7 @@ Context::Context(ContextConfig config, Status* error)
         saturation.enOpType = OP_TYPE_MANUAL;
         saturation.stManual.Saturation = static_cast<CVI_U8>(value);
         const CVI_S32 sat_result = CVI_ISP_SetSaturationAttr(state.pipe, &saturation);
-        std::printf("[camera] ISP saturation <- %d (result %d)\n", value, sat_result);
+        CVIMPP_INFO("ISP saturation <- %d (result %d)\n", value, sat_result);
       }
     }
   }
@@ -399,8 +399,8 @@ Context::Context(ContextConfig config, Status* error)
       if (mode_size.u32Width != state.sensor_size.u32Width ||
           mode_size.u32Height != state.sensor_size.u32Height)
       {
-        std::printf("[camera] VI mode %ux%u overrides PIC table %ux%u\n",
-                    mode_size.u32Width, mode_size.u32Height, state.sensor_size.u32Width,
+        CVIMPP_INFO("VI mode %ux%u overrides PIC table %ux%u\n", mode_size.u32Width,
+                    mode_size.u32Height, state.sensor_size.u32Width,
                     state.sensor_size.u32Height);
       }
       state.sensor_size = mode_size;
@@ -417,7 +417,7 @@ Context::Context(ContextConfig config, Status* error)
   const bool have_pub_attr = CVI_ISP_GetPubAttr(state.pipe, &pub_attr) == CVI_SUCCESS;
   if (have_pub_attr)
   {
-    std::printf("[camera] ISP pub attr: bayer=%d wdr=%d fps=%.1f\n",
+    CVIMPP_INFO("ISP pub attr: bayer=%d wdr=%d fps=%.1f\n",
                 static_cast<int>(pub_attr.enBayer), static_cast<int>(pub_attr.enWDRMode),
                 pub_attr.f32FrameRate);
   }

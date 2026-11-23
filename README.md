@@ -44,6 +44,12 @@ exists is an object that works. There is no `Ok()`/`Result()` pair to re-check
 at every use, and a failure never leaves a partially initialized pipeline
 behind. (The C++23 requirement comes from `std::expected`.)
 
+Logging is a compile-time level rather than a dependency: `CVIMPP_INFO` /
+`CVIMPP_WARN` / `CVIMPP_ERROR` write to `stderr`, the literal format is checked by
+`-Wformat`, and `CVIMPP_LOG_LEVEL` removes the calls entirely in a quiet build.
+The library owns no sink and exposes no logging API from its header; the host
+process decides where `stderr` goes.
+
 `Status` reports the failures the middleware returns: `Create()` uses it for
 initialization, and `Pop()` / `Push()` / `Consume()` use it for the per-frame
 errors that are recoverable. Allocation failure is not one of them; construction

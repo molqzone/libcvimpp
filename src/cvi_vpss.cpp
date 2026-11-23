@@ -137,8 +137,8 @@ std::shared_ptr<VpssResource> CreateVpssResource(
 
   const auto fail = [&](const char* stage, int code)
   {
-    std::printf("[camera] vpss(%d,%d) %s failed: %d\n", resource->group,
-                resource->channel, stage, code);
+    CVIMPP_ERROR("vpss(%d,%d) %s failed: %d\n", resource->group, resource->channel, stage,
+                 code);
     if (error != nullptr)
     {
       *error = code;
@@ -203,7 +203,7 @@ std::shared_ptr<VpssResource> CreateVpssResource(
     resource->vi_bound = true;
   }
 
-  std::printf("[camera] vpss(%d,%d) max %ux%u src=%d dst=%d ready\n", resource->group,
+  CVIMPP_INFO("vpss(%d,%d) max %ux%u src=%d dst=%d ready\n", resource->group,
               resource->channel, group_attr.u32MaxW, group_attr.u32MaxH,
               channel_attr.stFrameRate.s32SrcFrameRate,
               channel_attr.stFrameRate.s32DstFrameRate);

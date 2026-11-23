@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -17,6 +18,33 @@
 #include "cvi_vpss.h"
 #include "cvimpp/cvi.hpp"
 #include "sample_comm.h"
+
+// 库内日志：级别宏 + 编译期裁剪，输出到 stderr。库不拥有 sink、也不向公共头文件暴露
+// 日志 API：去向由宿主进程决定（本 BSP 里它和 `XR_LOG` 一样进 journal）。
+// In-library logging: level macros with compile-time stripping, written to stderr.  The
+// library owns no sink and exposes no logging API from its public header; the host
+// process decides where the text goes (in this BSP, the journal, like `XR_LOG`).
+#ifndef CVIMPP_LOG_LEVEL
+#define CVIMPP_LOG_LEVEL 3  // 0 = quiet, 1 = error, 2 = +warn, 3 = +info
+#endif
+
+#if CVIMPP_LOG_LEVEL >= 3
+#define CVIMPP_INFO(...) std::fprintf(stderr, "[cvimpp] " __VA_ARGS__)
+#else
+#define CVIMPP_INFO(...) ((void)0)
+#endif
+
+#if CVIMPP_LOG_LEVEL >= 2
+#define CVIMPP_WARN(...) std::fprintf(stderr, "[cvimpp] W " __VA_ARGS__)
+#else
+#define CVIMPP_WARN(...) ((void)0)
+#endif
+
+#if CVIMPP_LOG_LEVEL >= 1
+#define CVIMPP_ERROR(...) std::fprintf(stderr, "[cvimpp] E " __VA_ARGS__)
+#else
+#define CVIMPP_ERROR(...) ((void)0)
+#endif
 
 namespace cvimpp
 {
