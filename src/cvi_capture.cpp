@@ -5,22 +5,22 @@
 namespace cvimpp
 {
 
-Capture::Capture(Context& context, CaptureConfig config) : context_(&context)
+Capture::Capture(Context& context, CaptureConfig config, Status* error)
 {
   using namespace detail;
 
-  if (!context.Ok() || context.impl_ == nullptr || context.impl_->state == nullptr ||
-      config.width <= 0 || config.height <= 0 || config.fps <= 0 || config.depth < 0 ||
+  if (context.impl_ == nullptr || context.impl_->state == nullptr || config.width <= 0 ||
+      config.height <= 0 || config.fps <= 0 || config.depth < 0 ||
       config.depth > static_cast<int>(MAX_FRAME_SLOTS))
   {
-    status_ = context.Ok() ? Status(INVALID_ARGUMENT) : context.Result();
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
   const PIXEL_FORMAT_E output_format = ToVendorFormat(config.format);
   if (output_format == PIXEL_FORMAT_MAX)
   {
-    status_ = Status(INVALID_ARGUMENT);
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
@@ -49,21 +49,35 @@ Capture::Capture(Context& context, CaptureConfig config) : context_(&context)
                        static_cast<int>(state.sensor_size.u32Height), config.width,
                        config.height, &crop);
 
-  int result = CVI_SUCCESS;
+  int rc = CVI_SUCCESS;
   implementation->source =
       CreateVpssResource(context.impl_->state, group_attr, channel_attr,
-                         config.fit == FitMode::CROP ? &crop : nullptr, true, &result);
+                         config.fit == FitMode::CROP ? &crop : nullptr, true, &rc);
   if (implementation->source == nullptr)
   {
-    status_ = Status(result);
+    *error = Status(rc);
     return;
   }
   implementation->format = config.format;
   impl_ = std::move(implementation);
-  status_ = Status(CVI_SUCCESS);
+  *error = Status(CVI_SUCCESS);
 }
 
+Capture::Capture(Capture&&) noexcept = default;
+Capture& Capture::operator=(Capture&&) noexcept = default;
+
 Capture::~Capture() { impl_.reset(); }
+
+std::expected<Capture, Status> Capture::Create(Context& context, CaptureConfig config)
+{
+  Status error;
+  Capture capture(context, config, &error);
+  if (!error.Ok())
+  {
+    return std::unexpected(error);
+  }
+  return capture;
+}
 
 int Capture::Group() const
 {
@@ -79,7 +93,7 @@ Status Capture::Pop(Frame& frame)
 {
   using namespace detail;
 
-  if (!Ok() || impl_ == nullptr || impl_->source == nullptr || frame.Valid())
+  if (impl_ == nullptr || frame.Valid())
   {
     return Status(INVALID_ARGUMENT);
   }

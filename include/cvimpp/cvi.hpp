@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <span>
 
@@ -24,9 +25,10 @@ class Status
   int code_{};
 };
 
-// Status carries the failures the middleware reports.  Allocation failure is not
-// one of them: construction allocates, so it throws std::bad_alloc like any
-// other type that uses the standard library.
+// Status carries the failures the middleware reports, both from `Create()` and from
+// the per-frame calls that can fail at run time.  Allocation failure is not one of
+// them: construction allocates, so it throws std::bad_alloc like any other type that
+// uses the standard library.
 inline constexpr int INVALID_ARGUMENT = -1;
 inline constexpr int NOT_READY = -2;
 
@@ -66,24 +68,30 @@ class Encoder;
 class Context final
 {
  public:
-  explicit Context(ContextConfig config);
+  // 构造只有两种结果：可用的对象，或一个错误。失败不会留下"半成品"对象，所以调用方
+  // 只需要处理 `expected`，不必在每次使用时再问一次"我当初建成没有"。
+  // Construction has two outcomes, a usable object or an error.  A failed build
+  // leaves no half-built object behind, so callers handle `expected` once instead of
+  // re-checking `Ok()` at every use.
+  [[nodiscard]] static std::expected<Context, Status> Create(ContextConfig config);
+
   ~Context();
 
   Context(const Context&) = delete;
   Context& operator=(const Context&) = delete;
-  Context(Context&&) = delete;
-  Context& operator=(Context&&) = delete;
-
-  [[nodiscard]] bool Ok() const { return status_.Ok(); }
-  [[nodiscard]] Status Result() const { return status_; }
+  // 默认实现在 .cpp 里给出：`Impl` 在头文件中不完整，移动构造/赋值要在那里实例化。
+  // Defaulted where `Impl` is complete (the .cpp): moving needs the definition there.
+  Context(Context&&) noexcept;
+  Context& operator=(Context&&) noexcept;
 
  private:
   friend class Capture;
   friend class Encoder;
 
+  Context(ContextConfig config, Status* error);
+
   struct Impl;
   std::unique_ptr<Impl> impl_{};
-  Status status_{NOT_READY};
 };
 
 enum class PixelFormat : std::uint8_t
@@ -158,16 +166,15 @@ class Frame final
 class Capture final
 {
  public:
-  Capture(Context& context, CaptureConfig config);
+  [[nodiscard]] static std::expected<Capture, Status> Create(Context& context,
+                                                             CaptureConfig config);
   ~Capture();
 
   Capture(const Capture&) = delete;
   Capture& operator=(const Capture&) = delete;
-  Capture(Capture&&) = delete;
-  Capture& operator=(Capture&&) = delete;
+  Capture(Capture&&) noexcept;
+  Capture& operator=(Capture&&) noexcept;
 
-  [[nodiscard]] bool Ok() const { return status_.Ok(); }
-  [[nodiscard]] Status Result() const { return status_; }
   /// @brief VPSS group this capture owns; a group is a pipeline, not a channel.
   [[nodiscard]] int Group() const;
   [[nodiscard]] PixelFormat Format() const;
@@ -176,10 +183,10 @@ class Capture final
   [[nodiscard]] Status Pop(Frame& frame);
 
  private:
+  Capture(Context& context, CaptureConfig config, Status* error);
+
   struct Impl;
-  Context* context_{};
   std::unique_ptr<Impl> impl_{};
-  Status status_{NOT_READY};
 };
 
 enum class Codec : std::uint8_t
@@ -225,16 +232,15 @@ using AccessUnitCallback = void (*)(void* context,
 class Encoder final
 {
  public:
-  Encoder(Context& context, EncoderConfig config);
+  [[nodiscard]] static std::expected<Encoder, Status> Create(Context& context,
+                                                             EncoderConfig config);
   ~Encoder();
 
   Encoder(const Encoder&) = delete;
   Encoder& operator=(const Encoder&) = delete;
-  Encoder(Encoder&&) = delete;
-  Encoder& operator=(Encoder&&) = delete;
+  Encoder(Encoder&&) noexcept;
+  Encoder& operator=(Encoder&&) noexcept;
 
-  [[nodiscard]] bool Ok() const { return status_.Ok(); }
-  [[nodiscard]] Status Result() const { return status_; }
   [[nodiscard]] int Channel() const;
 
   [[nodiscard]] Status Push(const Frame& frame);
@@ -243,10 +249,10 @@ class Encoder final
   [[nodiscard]] Status Consume(AccessUnitCallback callback, void* context);
 
  private:
+  Encoder(Context& context, EncoderConfig config, Status* error);
+
   struct Impl;
-  Context* context_{};
   std::unique_ptr<Impl> impl_{};
-  Status status_{NOT_READY};
 };
 
 }  // namespace cvimpp

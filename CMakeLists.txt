@@ -66,7 +66,10 @@ add_library(cvimpp STATIC
   src/cvi_capture.cpp
   src/cvi_encoder.cpp)
 
-target_compile_features(cvimpp PUBLIC cxx_std_20)
+# C++23：公共 API 用 `std::expected` 报构造失败，消费方一起升到 23。
+# C++23: the public API reports construction failures with `std::expected`, so consumers
+# move up with it.
+target_compile_features(cvimpp PUBLIC cxx_std_23)
 # 与中间件库保持**同一组传感器宏**：`SAMPLE_SNS_TYPE_E` 的编号本身是被这些宏包着的，
 # 应用侧少定义一个，它看到的枚举就和库里差一位——ini 在库里解析成第 N 项，应用把同一个
 # 数值传回去却对应另一个传感器，查表于是返回 NULL（"fail to find pstSnsObj"）。

@@ -132,13 +132,13 @@ ContextState::~ContextState()
 
 }  // namespace detail
 
-Context::Context(ContextConfig config)
+Context::Context(ContextConfig config, Status* error)
 {
   using detail::ContextState;
 
   if (config.vi_pool_size == 0 || config.vi_pool_count == 0)
   {
-    status_ = Status(INVALID_ARGUMENT);
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
@@ -158,7 +158,7 @@ Context::Context(ContextConfig config)
     int result = SAMPLE_COMM_VI_SetIniPath(config.sensor_ini_path);
     if (result != CVI_SUCCESS)
     {
-      status_ = Status(result);
+      *error = Status(result);
       return;
     }
   }
@@ -169,21 +169,21 @@ Context::Context(ContextConfig config)
   SAMPLE_COMM_VI_ParseIni(&ini);
   if (ini.devNum == 0 || ini.devNum > VI_MAX_DEV_NUM)
   {
-    status_ = Status(INVALID_ARGUMENT);
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
   int result = CVI_VI_SetDevNum(ini.devNum);
   if (result != CVI_SUCCESS)
   {
-    status_ = Status(result);
+    *error = Status(result);
     return;
   }
 
   result = SAMPLE_COMM_VI_IniToViCfg(&ini, &state.vi_config);
   if (result != CVI_SUCCESS)
   {
-    status_ = Status(result);
+    *error = Status(result);
     return;
   }
 
@@ -211,7 +211,7 @@ Context::Context(ContextConfig config)
   if (result != CVI_SUCCESS || state.sensor_size.u32Width == 0 ||
       state.sensor_size.u32Height == 0)
   {
-    status_ = Status(result != CVI_SUCCESS ? result : INVALID_ARGUMENT);
+    *error = Status(result != CVI_SUCCESS ? result : INVALID_ARGUMENT);
     return;
   }
 
@@ -238,7 +238,7 @@ Context::Context(ContextConfig config)
                             DEFAULT_ALIGN, &calculated);
   if (calculated.u32VBSize == 0)
   {
-    status_ = Status(INVALID_ARGUMENT);
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
@@ -280,7 +280,7 @@ Context::Context(ContextConfig config)
   }
   if (result != CVI_SUCCESS)
   {
-    status_ = Status(result);
+    *error = Status(result);
     return;
   }
 
@@ -310,7 +310,7 @@ Context::Context(ContextConfig config)
     // state destructor must not repeat that cleanup.
     state.system_started = false;
     state.vb_started = false;
-    status_ = Status(result);
+    *error = Status(result);
     return;
   }
   state.vi_started = true;
@@ -409,7 +409,7 @@ Context::Context(ContextConfig config)
 
   if (!ApplyManualIsp(state.pipe, config.manual_isp))
   {
-    status_ = Status(NOT_READY);
+    *error = Status(NOT_READY);
     return;
   }
 
@@ -437,8 +437,22 @@ Context::Context(ContextConfig config)
   }
 
   impl_ = std::move(implementation);
-  status_ = Status(CVI_SUCCESS);
+  *error = Status(CVI_SUCCESS);
 }
+
+std::expected<Context, Status> Context::Create(ContextConfig config)
+{
+  Status error;
+  Context context(config, &error);
+  if (!error.Ok())
+  {
+    return std::unexpected(error);
+  }
+  return context;
+}
+
+Context::Context(Context&&) noexcept = default;
+Context& Context::operator=(Context&&) noexcept = default;
 
 Context::~Context() { impl_.reset(); }
 

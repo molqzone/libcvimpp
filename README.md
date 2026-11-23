@@ -1,6 +1,6 @@
 # libcvimpp
 
-A small C++20 RAII wrapper around the CVI MPI on the SG200x (MaixCAM), covering
+A small C++23 RAII wrapper around the CVI MPI on the SG200x (MaixCAM), covering
 the capture path (VI -> VPSS) and the encoder path (VENC, H.264/H.265/JPEG).
 
 The public header `include/cvimpp/cvi.hpp` depends only on the C++ standard
@@ -38,9 +38,16 @@ an `mmap`/`munmap` pair per frame.
 The consequence is a lifetime contract: a frame must be released before the
 `Capture` (or `Encoder`) that produced it is destroyed.
 
-`Status` reports the failures the middleware returns; it is not a general error
-channel. Construction allocates, so it throws `std::bad_alloc` on allocation
-failure, like any other type that uses the standard library.
+Construction cannot half-succeed: `Context`, `Capture` and `Encoder` are built
+through `Create()` and return `std::expected<T, Status>`, so an object that
+exists is an object that works. There is no `Ok()`/`Result()` pair to re-check
+at every use, and a failure never leaves a partially initialized pipeline
+behind. (The C++23 requirement comes from `std::expected`.)
+
+`Status` reports the failures the middleware returns: `Create()` uses it for
+initialization, and `Pop()` / `Push()` / `Consume()` use it for the per-frame
+errors that are recoverable. Allocation failure is not one of them; construction
+throws `std::bad_alloc` like any other type that uses the standard library.
 
 ## License
 

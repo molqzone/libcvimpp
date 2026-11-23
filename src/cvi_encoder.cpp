@@ -64,20 +64,20 @@ EncoderState::~EncoderState() { ReleaseVenc(*this); }
 
 }  // namespace detail
 
-Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
+Encoder::Encoder(Context& context, EncoderConfig config, Status* error)
 {
   using namespace detail;
 
   const PAYLOAD_TYPE_E payload = ToPayloadType(config.codec);
   const PIXEL_FORMAT_E input_format = ToVendorFormat(config.format);
-  if (!context.Ok() || context.impl_ == nullptr || context.impl_->state == nullptr ||
+  if (context.impl_ == nullptr || context.impl_->state == nullptr ||
       !IsSupportedPayload(payload) || input_format == PIXEL_FORMAT_MAX ||
       config.width <= 0 || config.height <= 0 || config.input_fps <= 0 ||
       config.output_fps <= 0 || config.output_fps > config.input_fps ||
       config.bitrate_kbps <= 0 || config.jpg_quality < 0 || config.jpg_quality > 100 ||
       (payload != PT_JPEG && config.gop <= 0))
   {
-    status_ = context.Ok() ? Status(INVALID_ARGUMENT) : context.Result();
+    *error = Status(INVALID_ARGUMENT);
     return;
   }
 
@@ -139,7 +139,7 @@ Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
   }
   if (!state.channel_created)
   {
-    status_ = Status(create_result);
+    *error = Status(create_result);
     return;
   }
 
@@ -174,24 +174,24 @@ Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
     conversion_attr.stAspectRatio.u32BgColor = COLOR_RGB_BLACK;
     conversion_attr.stNormalize.bEnable = CVI_FALSE;
 
-    int result = CVI_SUCCESS;
+    int converter_result = CVI_SUCCESS;
     state.converter = CreateVpssResource(state.context, group_attr, conversion_attr,
-                                         nullptr, false, &result);
+                                         nullptr, false, &converter_result);
     if (state.converter == nullptr)
     {
       ReleaseVenc(state);
-      status_ = Status(result);
+      *error = Status(converter_result);
       return;
     }
   }
 
   VENC_RECV_PIC_PARAM_S receive{};
   receive.s32RecvPicNum = -1;
-  int result = CVI_VENC_StartRecvFrame(state.channel, &receive);
-  if (result != CVI_SUCCESS)
+  int rc = CVI_VENC_StartRecvFrame(state.channel, &receive);
+  if (rc != CVI_SUCCESS)
   {
     ReleaseVenc(state);
-    status_ = Status(result);
+    *error = Status(rc);
     return;
   }
   state.receiving = true;
@@ -199,24 +199,38 @@ Encoder::Encoder(Context& context, EncoderConfig config) : context_(&context)
   if (payload == PT_JPEG)
   {
     VENC_JPEG_PARAM_S jpeg{};
-    result = CVI_VENC_GetJpegParam(state.channel, &jpeg);
-    if (result == CVI_SUCCESS)
+    rc = CVI_VENC_GetJpegParam(state.channel, &jpeg);
+    if (rc == CVI_SUCCESS)
     {
       const int quality = config.jpg_quality == 0 ? 80 : config.jpg_quality;
       jpeg.u32Qfactor = static_cast<CVI_U32>(std::clamp(quality, 51, 99));
-      result = CVI_VENC_SetJpegParam(state.channel, &jpeg);
+      rc = CVI_VENC_SetJpegParam(state.channel, &jpeg);
     }
-    if (result != CVI_SUCCESS)
+    if (rc != CVI_SUCCESS)
     {
       ReleaseVenc(state);
-      status_ = Status(result);
+      *error = Status(rc);
       return;
     }
   }
 
   impl_ = std::move(implementation);
-  status_ = Status(CVI_SUCCESS);
+  *error = Status(CVI_SUCCESS);
 }
+
+std::expected<Encoder, Status> Encoder::Create(Context& context, EncoderConfig config)
+{
+  Status error;
+  Encoder encoder(context, config, &error);
+  if (!error.Ok())
+  {
+    return std::unexpected(error);
+  }
+  return encoder;
+}
+
+Encoder::Encoder(Encoder&&) noexcept = default;
+Encoder& Encoder::operator=(Encoder&&) noexcept = default;
 
 Encoder::~Encoder() { impl_.reset(); }
 
@@ -229,7 +243,7 @@ Status Encoder::Push(const Frame& frame)
 {
   using namespace detail;
 
-  if (!Ok() || impl_ == nullptr || !frame.Valid() || impl_->state->frame_pending)
+  if (impl_ == nullptr || !frame.Valid() || impl_->state->frame_pending)
   {
     return Status(INVALID_ARGUMENT);
   }
@@ -277,7 +291,7 @@ Status Encoder::Consume(AccessUnitCallback callback, void* context)
 {
   using namespace detail;
 
-  if (!Ok() || impl_ == nullptr || impl_->state == nullptr || callback == nullptr)
+  if (impl_ == nullptr || callback == nullptr)
   {
     return Status(INVALID_ARGUMENT);
   }
